@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.DS_Store
+.superpowers/
+# 공개 저장소: 실제 곡 파일은 커밋하지 않는다 (테스트용 합성 파일만 예외로 추가할 것)
+*.m4a
