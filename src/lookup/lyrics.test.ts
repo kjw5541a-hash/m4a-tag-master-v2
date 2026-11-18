@@ -61,6 +61,12 @@ test('stripLrc: 시간 태그·ID 태그 줄을 지우고 줄 끝·전체 앞뒤
   )
 })
 
+test('stripLrc: 시간 태그 뒤 공백과 태그 앞 공백·BOM도 지운다', () => {
+  assert.equal(stripLrc('[00:01.00] a\n[00:02.00] b'), 'a\nb')
+  assert.equal(stripLrc('x\n  [00:01.00]y'), 'x\ny')
+  assert.equal(stripLrc('﻿[00:01.00] a\n[00:02.00] b'), 'a\nb')
+})
+
 test('splitLyrics: LRC면 가사와 lrc를, 아니면 가사만', () => {
   assert.deepEqual(splitLyrics('[00:01.00]가사'), { lyrics: '가사', lrc: '[00:01.00]가사' })
   assert.deepEqual(splitLyrics(' 가사 '), { lyrics: '가사' })
@@ -75,6 +81,11 @@ test('candidateLyrics: plain 우선, synced만 있으면 타임스탬프를 지�
     lyrics: '동기',
     lrc: '[00:01.00]동기',
   })
+  // LRCLIB 형식 "[mm:ss.xx] 가사": 줄 앞 공백이 남지 않는다
+  assert.equal(
+    candidateLyrics(cand(1, 'a', 1, { synced: '[00:01.00] 첫 줄\n[00:02.00] 둘째 줄' })).lyrics,
+    '첫 줄\n둘째 줄',
+  )
 })
 
 test('pickLyrics: 가수가 같고 길이 차이가 3초 이내이며 가사가 있는 첫 후보', () => {

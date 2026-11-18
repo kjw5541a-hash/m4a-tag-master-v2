@@ -29,7 +29,8 @@ export function isLrc(text: string): boolean {
 export function stripLrc(lrc: string): string {
   return lines(lrc)
     .filter((l) => !ID_TAG_LINE.test(l.trim()))
-    .map((l) => l.replace(TIME_TAGS, '').trimEnd())
+    // 태그 앞(공백·BOM)과 "[mm:ss.xx] 가사"의 태그 뒤 공백까지 지운다.
+    .map((l) => l.trim().replace(TIME_TAGS, '').trim())
     .join('\n')
     .trim()
 }
