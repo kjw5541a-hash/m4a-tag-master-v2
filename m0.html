@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>M4A Tag Master v2 · M0 측정</title>
+    <style>
+      body { font: 16px/1.5 -apple-system, system-ui, sans-serif; margin: 0; padding: 16px max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left)); }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      h2 { font-size: 17px; margin: 24px 0 8px; }
+      small, .muted { color: #666; }
+      ol { padding-left: 20px; margin: 8px 0; }
+      select, input, button { font-size: 16px; }
+      button { min-height: 44px; padding: 0 16px; margin: 4px 4px 4px 0; border-radius: 10px; border: 1px solid #999; background: #f4f4f4; }
+      button:disabled { opacity: 0.5; }
+      label { display: block; margin: 8px 0; }
+      #crash { background: #ffe3e3; padding: 8px 12px; border-radius: 8px; }
+      #progress { font-variant-numeric: tabular-nums; min-height: 1.5em; }
+      table { border-collapse: collapse; width: 100%; font-size: 14px; }
+      th, td { text-align: left; vertical-align: top; padding: 4px 6px; border-bottom: 1px solid #ddd; }
+      th { white-space: nowrap; font-weight: 600; }
+      audio { width: 100%; }
+      #live { display: flex; align-items: center; gap: 16px; margin: 8px 0; font-size: 28px; font-weight: 700; }
+      #beat { width: 36px; height: 36px; border-radius: 50%; background: #ddd; }
+      #beat.on { animation: flash 150ms ease-out; }
+      @keyframes flash { from { background: #e33; } to { background: #ddd; } }
+      #next { color: #999; font-size: 20px; }
+      #chordList { font-size: 13px; word-break: break-word; }
+    </style>
+  </head>
+  <body>
+    <h1>M0 측정 페이지</h1>
+    <small>빌드 <span id="build"></span></small>
+    <p id="crash" hidden></p>
+
+    <h2>순서</h2>
+    <ol>
+      <li>5분 안팎의 곡을 고르고, 리듬 방식 <b>multifeature</b>로 분석</li>
+      <li>같은 곡을 <b>degara</b>로 분석</li>
+      <li>분석 길이를 <b>10분</b>, <b>15분</b>으로 바꿔 두 방식 모두 분석 (탭이 꺼져도 기록은 남음)</li>
+      <li>▶︎ 재생하며 빨간 점멸이 박자와 맞는지, 코드가 그럴듯한지 확인</li>
+      <li>공유 1개·10개 → '파일에 저장'이 되는지 확인 (파일 앱에서 저장된 것 확인)</li>
+      <li>[결과 복사] 후 대화창에 붙여넣기 + 아이폰 기종·4번 체감 결과 적기</li>
+    </ol>
+
+    <h2>분석</h2>
+    <label>파일 <input id="file" type="file" accept=".m4a,audio/mp4,audio/x-m4a" /></label>
+    <label>리듬 방식
+      <select id="method">
+        <option value="multifeature">multifeature</option>
+        <option value="degara">degara</option>
+      </select>
+    </label>
+    <label>분석 길이
+      <select id="length">
+        <option value="0">원본 그대로</option>
+        <option value="10">10분 (원본 반복)</option>
+        <option value="15">15분 (원본 반복)</option>
+      </select>
+    </label>
+    <button id="run">분석 시작</button>
+    <div id="progress" class="muted"></div>
+
+    <h2>재생 확인</h2>
+    <audio id="audio" controls preload="metadata"></audio>
+    <div id="live"><div id="beat"></div><span id="now">-</span><span id="next"></span></div>
+    <p id="chordList" class="muted"></p>
+
+    <h2>공유 시험</h2>
+    <button id="share1">1개 공유</button>
+    <button id="share10">10개 공유</button>
+
+    <h2>기록</h2>
+    <button id="copy">결과 복사</button>
+    <button id="clear">기록 지우기</button>
+    <table><tbody id="report"></tbody></table>
+    <textarea id="copyText" rows="8" style="width: 100%" hidden readonly></textarea>
+
+    <script type="module" src="/src/m0.ts"></script>
+  </body>
+</html>
