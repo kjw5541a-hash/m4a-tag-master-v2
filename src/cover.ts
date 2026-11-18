@@ -33,3 +33,19 @@ export function isSquare(bytes: Uint8Array): boolean {
   const size = imageSize(bytes)
   return size !== undefined && size.width === size.height
 }
+
+/** 가운데를 짧은 변 길이의 정사각형으로 잘라 JPEG(품질 0.92)로 만든다. 해상도는 줄이지 않는다. 브라우저 전용. */
+export async function cropSquareJpeg(bytes: Uint8Array): Promise<Uint8Array> {
+  // 바이트는 새로 읽은 ArrayBuffer 위에 있으므로 BlobPart 타입에 맞춰 좁힌다.
+  const bitmap = await createImageBitmap(new Blob([bytes as Uint8Array<ArrayBuffer>]))
+  const side = Math.min(bitmap.width, bitmap.height)
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = side
+  const x = Math.floor((bitmap.width - side) / 2)
+  const y = Math.floor((bitmap.height - side) / 2)
+  canvas.getContext('2d')!.drawImage(bitmap, x, y, side, side, 0, 0, side, side)
+  bitmap.close()
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92))
+  if (!blob) throw new Error('이미지를 자르지 못했어요')
+  return new Uint8Array(await blob.arrayBuffer())
+}

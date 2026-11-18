@@ -4,7 +4,7 @@ YouTube에서 받은 `.m4a`에 제목·가수·앨범·커버·가사를 넣고,
 
 ## 현재 상태
 
-M0(기술 스파이크): 아이폰 실기기에서 디코드·분석 시간과 메모리, 시간축, 여러 파일 공유를 재는 측정 페이지입니다.
+M2(곡 하나 처리): m4a 한 곡을 넣으면 파일명·태그에서 검색어를 정리하고, iTunes에서 곡 정보와 커버를, LRCLIB에서 가사를 찾아 채웁니다. 편집 화면에서 확인·수정한 뒤 [저장 · 공유]로 태그가 들어간 새 파일을 만듭니다(원본은 수정하지 않습니다). 분석(BPM·조성·코드)과 여러 곡 일괄 저장은 아직 없습니다. 측정 페이지(M0)는 `/m0.html`에 남아 있습니다.
 
 - 배포: https://kjw5541a-hash.github.io/m4a-tag-master-v2/
 
@@ -14,6 +14,8 @@ M0(기술 스파이크): 아이폰 실기기에서 디코드·분석 시간과 �
 npm install
 npm run dev          # 같은 Wi-Fi의 기기에서도 접속 가능 (--host)
 npm run build        # 타입 검사 + 빌드
+npm test             # 단위 테스트 (node:test, ffmpeg 필요)
+npm run test:e2e     # 빌드 후 Chrome(Playwright)으로 한 곡 저장까지 스모크 테스트 (Google Chrome·ffmpeg 필요, CI에는 넣지 않음)
 npm run check:analysis -- <m4a 파일> [multifeature|degara]   # Mac에서 분석 파이프라인 검증 (ffmpeg 필요)
 ```
 
