@@ -1,0 +1,131 @@
+// 한 곡의 BPM·조성·비트 단위 코드를 구한다. 브라우저 워커와 Node 검증 스크립트가 같이 쓴다.
+// essentia.js가 만든 Vector는 JS GC가 회수하지 않으므로, 다 쓰면 직접 delete() 한다.
+
+export const SAMPLE_RATE = 44100 // RhythmExtractor2013은 44.1kHz를 전제로 한다
+const FRAME_SIZE = 4096
+const HOP_SIZE = 2048
+
+export interface ChordSegment {
+  start: number
+  end: number
+  chord: string // "A#m", "D#", 코드 없음은 "N"
+  strength: number // 병합된 비트 중 최댓값 (진단용)
+}
+
+export interface AnalysisResult {
+  bpm: number
+  bpmConfidence: number // 0~5.32
+  ticks: number[] // 비트 위치(초)
+  key: string
+  scale: string
+  keyStrength: number
+  chords: ChordSegment[] // 0초부터 끝까지 빈틈없이, 같은 코드 연속은 병합
+  frames: number
+  times: { rhythm: number; key: number; hpcp: number; chords: number } // 단계별 ms
+}
+
+const FLAT_TO_SHARP: Record<string, string> = { Db: 'C#', Eb: 'D#', Gb: 'F#', Ab: 'G#', Bb: 'A#' }
+const toSharp = (root: string) => FLAT_TO_SHARP[root] ?? root
+const normalizeChord = (c: string) => (c.endsWith('m') ? toSharp(c.slice(0, -1)) + 'm' : toSharp(c))
+const round2 = (x: number) => Math.round(x * 100) / 100
+
+// multifeature: 비트 정확도·confidence 있음, 5분 곡 기준 WASM 힙 +166MB·6초(Mac).
+// degara: confidence 없음(항상 0), +27MB·1초. M0에서 아이폰 실측 후 하나로 정한다.
+export type RhythmMethod = 'multifeature' | 'degara'
+
+export function analyze(
+  essentia: any,
+  signal: Float32Array,
+  method: RhythmMethod = 'multifeature',
+  onProgress: (stage: string, ratio: number) => void = () => {},
+): AnalysisResult {
+  const duration = signal.length / SAMPLE_RATE
+  const times = { rhythm: 0, key: 0, hpcp: 0, chords: 0 }
+  let t = performance.now()
+  const lap = (stage: keyof typeof times) => {
+    const now = performance.now()
+    times[stage] = Math.round(now - t)
+    t = now
+  }
+
+  const signalVec = essentia.arrayToVector(signal)
+
+  onProgress('rhythm', 0)
+  const rhythm = essentia.RhythmExtractor2013(signalVec, 208, method, 40)
+  const ticks = Array.from(essentia.vectorToArray(rhythm.ticks) as Float32Array)
+  rhythm.estimates.delete()
+  rhythm.bpmIntervals.delete()
+  lap('rhythm')
+
+  onProgress('key', 0)
+  const key = essentia.KeyExtractor(signalVec)
+  signalVec.delete()
+  lap('key')
+
+  // 프레임마다 HPCP(12음 크로마)를 구한다. 파라미터는 M3 평가에서 조정한다.
+  // essentia.FrameGenerator는 전체 프레임을 한 번에 만들어 5분 곡에 약 108MB를 쓰므로,
+  // 프레임 i의 중심이 i*HOP에 오도록(Essentia 기본 규칙) 한 개씩 잘라 넘긴다.
+  const frameCount = Math.ceil(signal.length / HOP_SIZE)
+  const frameBuf = new Float32Array(FRAME_SIZE)
+  const pcp = new essentia.module.VectorVectorFloat()
+  for (let i = 0; i < frameCount; i++) {
+    const start = i * HOP_SIZE - FRAME_SIZE / 2
+    const from = Math.max(0, start)
+    frameBuf.fill(0)
+    frameBuf.set(signal.subarray(from, Math.min(signal.length, start + FRAME_SIZE)), from - start)
+    const frame = essentia.arrayToVector(frameBuf)
+    const windowed = essentia.Windowing(frame, true, FRAME_SIZE, 'blackmanharris62')
+    const spectrum = essentia.Spectrum(windowed.frame, FRAME_SIZE)
+    const peaks = essentia.SpectralPeaks(spectrum.spectrum, 0.00001, 3500, 60, 20, 'magnitude', SAMPLE_RATE)
+    const hpcp = essentia.HPCP(
+      peaks.frequencies, peaks.magnitudes,
+      true, 500, 8, 3500, false, 20, true, 'unitMax', 440, SAMPLE_RATE, 12, 'cosine', 1,
+    )
+    pcp.push_back(hpcp.hpcp)
+    for (const v of [frame, windowed.frame, spectrum.spectrum, peaks.frequencies, peaks.magnitudes, hpcp.hpcp]) {
+      v.delete()
+    }
+    if (i % 256 === 0) onProgress('hpcp', i / frameCount)
+  }
+  lap('hpcp')
+
+  // 비트와 비트 사이 구간마다 코드 하나
+  onProgress('chords', 0)
+  const detected = essentia.ChordsDetectionBeats(pcp, rhythm.ticks, 'interbeat_median', HOP_SIZE, SAMPLE_RATE)
+  const names: string[] = []
+  for (let i = 0; i < detected.chords.size(); i++) names.push(detected.chords.get(i))
+  const strengths = Array.from(essentia.vectorToArray(detected.strength) as Float32Array)
+  for (const v of [detected.chords, detected.strength, pcp, rhythm.ticks]) v.delete()
+
+  // 경계: 0, 비트들, 곡 끝. 첫 비트 전과 코드가 없는 구간은 "N".
+  const bounds = [0, ...ticks, duration].map(round2)
+  const chords: ChordSegment[] = []
+  for (let i = 0; i + 1 < bounds.length; i++) {
+    const [start, end] = [bounds[i], bounds[i + 1]]
+    if (end <= start) continue
+    const beat = i - 1 // bounds[i] = ticks[i-1]
+    const seg = beat >= 0 && beat < names.length
+      ? { start, end, chord: normalizeChord(names[beat]), strength: strengths[beat] }
+      : { start, end, chord: 'N', strength: 0 }
+    const last = chords.at(-1)
+    if (last && last.chord === seg.chord) {
+      last.end = end
+      last.strength = Math.max(last.strength, seg.strength)
+    } else {
+      chords.push(seg)
+    }
+  }
+  lap('chords')
+
+  return {
+    bpm: rhythm.bpm,
+    bpmConfidence: rhythm.confidence,
+    ticks,
+    key: toSharp(key.key),
+    scale: key.scale,
+    keyStrength: key.strength,
+    chords,
+    frames: frameCount,
+    times,
+  }
+}
