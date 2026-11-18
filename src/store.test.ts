@@ -146,12 +146,27 @@ test('lookup(id, 검색어): 그 검색어 하나만 찾고 edit.query로 남긴
   assert.equal(find(id).edit!.candidate!.trackId, 9)
 })
 
-test('choose: 앨범이 바뀌고, 가사를 직접 고쳤으면 가사를 다시 찾지 않는다', async (t) => {
-  const urls = stubAll(t)
+test('choose: 받는 동안 검색 중으로 잠기고, 앨범이 바뀌고, 가사를 직접 고쳤으면 가사를 다시 찾지 않는다', async (t) => {
+  let artworkDelay = 0
+  // 두 번째 후보에도 아트워크가 있어야 선택할 때 다운로드가 일어난다.
+  const withArt = { ...ITUNES.results[1], artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/b/100x100bb.jpg' }
+  const urls = stubAll(t, {
+    itunes: () => ({ results: [ITUNES.results[0], withArt] }),
+    artwork: async () => (await sleep(artworkDelay), new Response(PNG)),
+  })
   const id = await add(m4a('Choose Band - Choose Song.m4a'))
   const other = find(id).edit!.candidates[1]!
   urls.length = 0
-  await useQueue.getState().choose(id, other)
+  artworkDelay = 60
+  // 아트워크를 받는 동안 화면이 잠겨야, 그 사이 저장이 옛 후보의 값을 쓰고 '저장됨'으로 표시되지 않는다.
+  const pending = useQueue.getState().choose(id, other)
+  assert.equal(find(id).status, 'searching')
+  await sleep(20)
+  assert.equal(find(id).status, 'searching')
+  assert.equal(find(id).edit!.candidate!.trackId, 1)
+  await pending
+  assert.equal(find(id).status, 'review')
+  assert.equal(find(id).edit!.candidate!.trackId, 2)
   assert.equal(find(id).edit!.album, 'Do You Remember')
   assert.ok(urls.some((u) => u.includes('lrclib.net')), '가사를 다시 찾아야 한다')
 

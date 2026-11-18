@@ -126,6 +126,8 @@ export const useQueue = create<Queue>()((set, get) => {
       const source = item(id)?.source
       if (!source) return
       const current = begin(id)
+      // 아트워크·가사를 받는 동안 화면이 잠기도록 '검색 중'으로 둔다. 안 그러면 그 사이 저장이 옛 후보의 값을 쓰고 '저장됨'이 된다.
+      patch(id, { status: 'searching', error: undefined })
       const artwork = await downloadCover(c)
       if (!current()) return
       patchEdit(id, (e) => selectCandidate(e, source, c, artwork))
@@ -134,7 +136,7 @@ export const useQueue = create<Queue>()((set, get) => {
       } catch (e) {
         if (current()) patch(id, { error: lookupMessage(e) })
       }
-      // 조회 중에 고른 경우, 그 조회는 버려졌으니 여기서 '검색 중'을 끝낸다.
+      // 위에서 켠 '검색 중'을 끝낸다. 조회 중에 고른 경우 그 조회는 버려졌으니 여기서 끝내는 것이기도 하다.
       if (current() && item(id)?.status === 'searching') patch(id, { status: 'review' })
     },
 
