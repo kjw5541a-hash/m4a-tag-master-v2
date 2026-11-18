@@ -35,8 +35,9 @@ export function initialEdit(src: Source, parsed: ParsedSource): Edit {
     candidates: [],
     title: parsed.title,
     artist: parsed.artist,
-    // 앨범이 가수와 같으면 유튜브 채널명이 남은 것이다.
-    album: tags.album === tags.artist ? '' : (tags.album ?? ''),
+    // 앨범이 가수 태그와 같고 정리 결과 가수가 그 태그와 달라졌으면 유튜브 채널명이 남은 것이다.
+    // 가수가 그대로면 셀프 타이틀 앨범일 수 있으니 지우지 않는다.
+    album: tags.album === tags.artist && parsed.artist !== tags.artist ? '' : (tags.album ?? ''),
     lyrics,
     lrc: tags.lrc,
     lyricsManual: lyrics !== '' || !!tags.lrc,

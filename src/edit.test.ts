@@ -56,6 +56,12 @@ test('initialEdit: yt-dlp 형태는 채널명 앨범을 비우고 기존 커버�
   assert.deepEqual(e.lyricsCandidates, [])
 })
 
+test('initialEdit: 가수가 정리로 바뀌지 않았으면 앨범이 가수와 같아도(셀프 타이틀) 앨범을 지킨다', () => {
+  const tags: Tags = { title: 'Palette', artist: 'IU', album: 'IU' }
+  const e = initialEdit(source(tags), { artist: 'IU', title: 'Palette', queries: ['IU Palette'] })
+  assert.equal(e.album, 'IU')
+})
+
 test('selectCandidate: 기존 커버가 정사각형이 아니면 artwork, 정사각형이면 기존 커버', () => {
   const e = initialEdit(source(ytTags), parsed)
   const picked = selectCandidate(e, source(ytTags), candidate, square)
