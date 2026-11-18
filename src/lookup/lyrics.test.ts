@@ -12,6 +12,7 @@ import {
   stripLrc,
   type LyricsCandidate,
 } from './lyrics.ts'
+import { LookupError } from './http.ts'
 import { stubFetch } from '../testing.ts'
 
 const json = (body: unknown, status = 200) =>
@@ -159,4 +160,27 @@ test('findLyrics: 채택할 것이 없으면 후보만 돌려주고 id로 중복
   // 제목·가수 search 한 번 + q= search 한 번 (iTunes 없으니 iTunes 이름 검색 없음)
   assert.equal(urls.length, 2)
   assert.equal(new URL(urls[1]!).searchParams.get('q'), '가수D 곡D')
+})
+
+test('findLyrics: 요청 하나가 실패해도 다음 요청으로 이어 가고 채택하면 오류 없이 끝난다', async (t) => {
+  const urls = stubFetch(t, (url) =>
+    url.pathname === '/api/get' ? new Response('', { status: 503 }) : json([lrclib(21, 'Artist E', 201, { plainLyrics: '가사' })]),
+  )
+  const found = await findLyrics({
+    title: '곡E',
+    artist: 'Artist E',
+    itunes: itunes({ title: '곡E', artist: 'Artist E', album: '앨범E', durationSec: 200 }),
+    fileDurationSec: 200,
+  })
+  assert.equal(found.adopted?.id, 21)
+  assert.equal(new URL(urls[0]!).pathname, '/api/get')
+  assert.equal(new URL(urls[1]!).pathname, '/api/search')
+})
+
+test('findLyrics: 모든 요청이 실패하면 마지막 오류를 던진다', async (t) => {
+  stubFetch(t, () => Promise.reject(new TypeError('fetch failed')))
+  await assert.rejects(
+    findLyrics({ title: '곡F', artist: 'Artist F', fileDurationSec: 200 }),
+    (e) => e instanceof LookupError && e.message === '검색 실패 (네트워크)',
+  )
 })

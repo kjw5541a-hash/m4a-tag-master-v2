@@ -1,5 +1,5 @@
 // 가사: LRC 처리 + LRCLIB 검색·채택 (기획서 5.4).
-import { fetchJson } from './http.ts'
+import { fetchJson, LookupError } from './http.ts'
 import type { Candidate } from './itunes.ts'
 import { normalizeName } from './query.ts'
 
@@ -95,7 +95,7 @@ export interface LyricsQuery {
   fileDurationSec: number
 }
 
-// get → 검색(파일 이름) → 검색(iTunes 이름) → q= 검색 순으로, 채택할 것이 생기면 멈춘다.
+// get → 검색(파일 이름) → 검색(iTunes 이름) → q= 검색 순으로, 채택할 것이 생기면 멈춘다. 요청 하나가 실패해도 다음으로 넘어간다.
 export async function findLyrics(
   q: LyricsQuery,
 ): Promise<{ adopted?: LyricsCandidate; candidates: LyricsCandidate[] }> {
@@ -120,12 +120,26 @@ export async function findLyrics(
   ].filter(Boolean)
 
   const candidates: LyricsCandidate[] = []
+  let failure: LookupError | undefined
+  let succeeded = false
   for (const url of urls) {
-    for (const c of parseLrclib(await fetchJson(url))) {
+    let body: unknown
+    try {
+      body = await fetchJson(url)
+    } catch (e) {
+      // 한 요청이 실패해도 다음 검색으로 이어 간다.
+      if (!(e instanceof LookupError)) throw e
+      failure = e
+      continue
+    }
+    succeeded = true
+    for (const c of parseLrclib(body)) {
       if (!candidates.some((x) => x.id === c.id)) candidates.push(c)
     }
     const adopted = pickLyrics(candidates, artistNames, refDurationSec)
     if (adopted) return { adopted, candidates }
   }
+  // 모든 요청이 실패했으면 오프라인 같은 사정이니 화면에 오류로 알린다.
+  if (!succeeded && failure) throw failure
   return { candidates }
 }
