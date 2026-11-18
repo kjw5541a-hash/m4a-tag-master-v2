@@ -29,12 +29,15 @@ const NOISE_ALL = new RegExp(NOISE, 'giu')
 const SEPARATORS = [' - ', ' _ ', ' | ']
 const QUOTED = /'([^']+)'|"([^"]+)"|‘([^’]+)’|“([^”]+)”/u
 
-/** 잡음 단어가 든 [..] (..) 【..】 묶음을 통째로, 그다음 떨어진 잡음 단어를 지운다. */
+// 묶음: 같은 종류 괄호는 2단계 중첩까지 한 묶음으로 본다("(Official (MV))"). 3단계 이상은 안쪽만 지워진다.
+const GROUP = /\[(?:[^[\]]|\[[^[\]]*\])*\]|\((?:[^()]|\([^()]*\))*\)|【(?:[^【】]|【[^【】]*】)*】/gu
+// 잡음을 지우고 남은 가장자리 구분자(앞 "- ", 뒤 " |")
+const EDGE_SEP = /^(?:[-_|]\s+)+|(?:\s+[-_|])+$/gu
+
+/** 잡음 단어가 든 [..] (..) 【..】 묶음을 통째로, 그다음 떨어진 잡음 단어를 지운다. 남은 가장자리 구분자도 지운다. */
 function stripNoise(s: string): string {
-  const noBrackets = s.replace(/\[[^\]]*\]|\([^)]*\)|【[^】]*】/gu, (m) =>
-    NOISE_WORD.test(m) ? '' : m,
-  )
-  return squash(noBrackets.replace(NOISE_ALL, ' '))
+  const noBrackets = s.replace(GROUP, (m) => (NOISE_WORD.test(m) ? '' : m))
+  return squash(squash(noBrackets.replace(NOISE_ALL, ' ')).replace(EDGE_SEP, ''))
 }
 
 /** 첫 구분자로 [가수, 제목]을 나눈다. 구분자도 따옴표도 없으면 전체가 제목. */
@@ -88,7 +91,8 @@ export function parseSource(
   } else {
     input = fileName.normalize('NFC').replace(/\.\w+$/, '')
     const dup = /\s(\d+)$/.exec(input)
-    if (dup) {
+    // 구분자 바로 뒤 숫자("Taylor Swift - 22")는 중복 번호가 아니라 제목이다.
+    if (dup && !/(?:^|\s)[-_|]$/u.test(input.slice(0, dup.index))) {
       dupNo = dup[1]
       input = input.slice(0, dup.index)
     }

@@ -62,6 +62,36 @@ const rows: [string, string, { title?: string; artist?: string }, typeof LEE][] 
     { title: '하늘을 달리다', artist: '이적' },
     { artist: '이적', title: '하늘을 달리다', queries: ['이적 하늘을 달리다'] },
   ],
+  [
+    '10. 잡음을 지운 뒤 남은 끝 구분자(|)는 같이 지운다',
+    'Artist - Title | Official MV.m4a',
+    {},
+    { artist: 'Artist', title: 'Title', queries: ['Artist Title'] },
+  ],
+  [
+    '11. 잡음을 지운 뒤 남은 끝 구분자(-)는 같이 지운다',
+    'Artist - Title - Official MV.m4a',
+    {},
+    { artist: 'Artist', title: 'Title', queries: ['Artist Title'] },
+  ],
+  [
+    '12. 중첩 괄호 안 잡음은 묶음째 지운다(남는 )가 없다)',
+    'A - T (Official (MV)).m4a',
+    {},
+    { artist: 'A', title: 'T', queries: ['A T'] },
+  ],
+  [
+    '13. 구분자 바로 뒤 숫자는 중복 번호가 아니라 제목이다',
+    'Taylor Swift - 22.m4a',
+    {},
+    { artist: 'Taylor Swift', title: '22', queries: ['Taylor Swift 22'] },
+  ],
+  [
+    '14. 구분자 바로 뒤 숫자(연도형)도 제목이다',
+    'Prince - 1999.m4a',
+    {},
+    { artist: 'Prince', title: '1999', queries: ['Prince 1999'] },
+  ],
 ]
 
 for (const [name, fileName, tags, want] of rows) {
