@@ -4,29 +4,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseBuffer } from 'music-metadata'
 import { inspect, readTags, writeTags, verify, Mp4Error, type Tags } from './mp4.ts'
+import { ffmpeg, makeImage, makeM4a } from './testing.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'mp4-test-'))
 let fileNo = 0
-
-function ffmpeg(...args: string[]): Buffer {
-  const r = spawnSync('ffmpeg', ['-v', 'error', '-y', ...args], { maxBuffer: 1 << 30 })
-  assert.equal(r.status, 0, r.stderr.toString())
-  assert.equal(r.stderr.toString(), '', 'ffmpeg가 오류를 냈다')
-  return r.stdout
-}
-
-/** 3초짜리 사인파 m4a를 만든다. args는 추가 입력·출력 옵션. */
-function make(...args: string[]): Uint8Array {
-  const file = join(dir, `in-${fileNo++}.m4a`)
-  ffmpeg('-f', 'lavfi', '-i', 'sine=frequency=440:duration=3', ...args, file)
-  return new Uint8Array(readFileSync(file))
-}
 
 /** 디코드한 PCM의 해시. 청크 오프셋이 하나라도 틀리면 달라지거나 ffmpeg가 오류를 낸다. */
 function pcmHash(bytes: Uint8Array): string {
@@ -35,8 +21,8 @@ function pcmHash(bytes: Uint8Array): string {
   return createHash('sha256').update(ffmpeg('-i', file, '-f', 's16le', '-')).digest('hex')
 }
 
-const jpeg = new Uint8Array(ffmpeg('-f', 'lavfi', '-i', 'color=c=red:s=32x32', '-frames:v', '1', '-f', 'mjpeg', '-'))
-const png = new Uint8Array(ffmpeg('-f', 'lavfi', '-i', 'color=c=blue:s=32x32', '-frames:v', '1', '-f', 'apng', '-plays', '1', '-'))
+const jpeg = makeImage(32, 32, 'mjpeg')
+const png = makeImage(32, 32, 'png')
 const coverFile = join(dir, 'cover.jpg')
 writeFileSync(coverFile, jpeg)
 
@@ -66,7 +52,7 @@ async function roundTrip(orig: Uint8Array, tags: Tags) {
 }
 
 test('faststart, 태그 없음: udta/meta/ilst를 만들고 뒤쪽 청크 오프셋을 옮긴다', async () => {
-  const orig = make('-movflags', '+faststart')
+  const orig = makeM4a('-movflags', '+faststart')
   assert.deepEqual(readTags(orig), {})
   const { out } = await roundTrip(orig, fullTags)
   assert.ok(out.length > orig.length)
@@ -74,11 +60,11 @@ test('faststart, 태그 없음: udta/meta/ilst를 만들고 뒤쪽 청크 오프
 })
 
 test('moov가 mdat 뒤에 있으면 오프셋을 바꾸지 않아도 된다', async () => {
-  await roundTrip(make(), fullTags)
+  await roundTrip(makeM4a(), fullTags)
 })
 
 test('yt-dlp 형태: 관리하지 않는 태그는 남기고, 빈 값은 지운다', async () => {
-  const orig = make('-i', coverFile, '-map', '0', '-map', '1', '-c:v', 'copy', '-disposition:v', 'attached_pic',
+  const orig = makeM4a('-i', coverFile, '-map', '0', '-map', '1', '-c:v', 'copy', '-disposition:v', 'attached_pic',
     '-metadata', 'title=Lee Juck(이적) _ running on the sky', '-metadata', 'artist=1theK (원더케이)',
     '-metadata', 'album=1theK (원더케이)', '-movflags', '+faststart')
   const before = readTags(orig)
@@ -92,19 +78,19 @@ test('yt-dlp 형태: 관리하지 않는 태그는 남기고, 빈 값은 지운�
 })
 
 test('co64(64비트 청크 오프셋)도 옮긴다', async () => {
-  const base = make('-movflags', '+faststart')
+  const base = makeM4a('-movflags', '+faststart')
   const orig = toCo64(base)
   assert.equal(pcmHash(orig), pcmHash(base), '테스트용 co64 파일이 잘못 만들어졌다')
   await roundTrip(orig, fullTags)
 })
 
 test('두 번 써도 결과가 같다', () => {
-  const once = writeTags(make('-movflags', '+faststart'), fullTags)
+  const once = writeTags(makeM4a('-movflags', '+faststart'), fullTags)
   assert.equal(Buffer.compare(writeTags(once, fullTags), once), 0)
 })
 
 test('inspect: 길이를 구하고, 지원하지 않는 파일은 이유와 함께 거부한다', () => {
-  assert.ok(Math.abs(inspect(make()).duration - 3) < 0.1)
+  assert.ok(Math.abs(inspect(makeM4a()).duration - 3) < 0.1)
   const reason = (bytes: Uint8Array) => {
     try {
       inspect(bytes)
@@ -114,9 +100,9 @@ test('inspect: 길이를 구하고, 지원하지 않는 파일은 이유와 함�
     }
     assert.fail('거부하지 않았다')
   }
-  assert.match(reason(make('-movflags', 'frag_keyframe+empty_moov')), /분할 MP4/)
+  assert.match(reason(makeM4a('-movflags', 'frag_keyframe+empty_moov')), /분할 MP4/)
   assert.match(reason(new Uint8Array(1000).fill(7)), /손상/)
-  assert.match(reason(make().subarray(0, 500)), /손상/)
+  assert.match(reason(makeM4a().subarray(0, 500)), /손상/)
 })
 
 test('실제 m4a 파일 (REAL_M4A_DIR이 있을 때만)', { skip: !process.env.REAL_M4A_DIR }, async () => {
