@@ -102,6 +102,23 @@ test('applyLyrics: 직접 고치지 않았으면 채택한 가사의 일반·싱
   assert.deepEqual(none.lyricsCandidates, [adopted])
 })
 
+test('applyLyrics: 자동 채택했던 가사는 새 후보가 채택되지 않으면 지우고, 직접 고친 가사는 둔다', () => {
+  const adopted: LyricsCandidate = { id: 1, artist: '이적', title: 'x', album: 'y', durationSec: 263, plain: '일반', synced: '[00:01.00]싱크' }
+  const auto = applyLyrics(initialEdit(source(ytTags), parsed), { adopted, candidates: [adopted] })
+  assert.equal(auto.lyrics, '일반')
+  // 다른 후보로 바꿨더니 채택할 가사가 없다: 앞 곡의 가사와 LRC가 남으면 안 된다
+  const other: LyricsCandidate = { id: 2, artist: '다른가수', title: 'z', album: 'y', durationSec: 100, plain: '남의 가사' }
+  const cleared = applyLyrics(auto, { candidates: [other] })
+  assert.equal(cleared.lyrics, '')
+  assert.equal(cleared.lrc, undefined)
+  assert.deepEqual(cleared.lyricsCandidates, [other])
+  // 직접 고쳤으면 그대로
+  const manual = applyLyrics({ ...auto, lyricsManual: true }, { candidates: [other] })
+  assert.equal(manual.lyrics, '일반')
+  assert.equal(manual.lrc, '[00:01.00]싱크')
+  assert.deepEqual(manual.lyricsCandidates, [other])
+})
+
 test('toTags: 기존 분석값을 지키며 편집값을 태그로 바꾼다', () => {
   const src = source(v2Tags)
   const tags = toTags(initialEdit(src, parsed), src)

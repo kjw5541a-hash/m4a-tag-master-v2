@@ -54,7 +54,9 @@ export function selectCandidate(e: Edit, src: Source, c: Candidate, artwork?: Ui
 
 export function applyLyrics(e: Edit, r: { adopted?: LyricsCandidate; candidates: LyricsCandidate[] }): Edit {
   const next = { ...e, lyricsCandidates: r.candidates }
-  return !e.lyricsManual && r.adopted ? { ...next, ...candidateLyrics(r.adopted) } : next
+  if (e.lyricsManual) return next
+  // 앞 후보에서 자동으로 채운 가사가 남지 않도록, 채택한 것이 없으면 비운다.
+  return { ...next, ...(r.adopted ? candidateLyrics(r.adopted) : { lyrics: '', lrc: undefined }) }
 }
 
 // 분석값(analysis)은 M3 전까지 만들지 않으므로 기존 값을 그대로 보존한다.
