@@ -140,7 +140,15 @@ export const useQueue = create<Queue>()((set, get) => {
       if (current() && item(id)?.status === 'searching') patch(id, { status: 'review' })
     },
 
-    update: (id, p) => patchEdit(id, (e) => ({ ...e, ...p })),
+    update: (id, p) =>
+      set((s) => ({
+        items: s.items.map((i) => {
+          if (i.id !== id || !i.edit) return i
+          // 저장한 뒤 검색어 말고 다른 값을 고치면 파일이 화면과 달라진 것이니 다시 확인하게 한다. savedAs는 남긴다.
+          const dirty = i.status === 'saved' && Object.keys(p).some((k) => k !== 'query')
+          return { ...i, edit: { ...i.edit, ...p }, status: dirty ? 'review' : i.status }
+        }),
+      })),
     remove: (id) => set((s) => ({ items: s.items.filter((i) => i.id !== id) })),
     markSaved: (id, savedAs) => patch(id, { status: 'saved', savedAs }),
   }

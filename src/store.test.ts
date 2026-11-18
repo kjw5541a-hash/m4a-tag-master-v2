@@ -157,7 +157,7 @@ test('choose: 받는 동안 검색 중으로 잠기고, 앨범이 바뀌고, 가
   const id = await add(m4a('Choose Band - Choose Song.m4a'))
   const other = find(id).edit!.candidates[1]!
   urls.length = 0
-  artworkDelay = 60
+  artworkDelay = 300
   // 아트워크를 받는 동안 화면이 잠겨야, 그 사이 저장이 옛 후보의 값을 쓰고 '저장됨'으로 표시되지 않는다.
   const pending = useQueue.getState().choose(id, other)
   assert.equal(find(id).status, 'searching')
@@ -195,6 +195,12 @@ test('update·markSaved·remove', async (t) => {
   assert.equal(find(id).edit!.title, '고친 제목')
   markSaved(id, 'a.m4a')
   assert.equal(find(id).status, 'saved')
+  assert.equal(find(id).savedAs, 'a.m4a')
+  // 저장 뒤 검색어만 고치면 파일과 화면이 그대로라 저장됨을 유지하고, 다른 값을 고치면 확인 필요로 돌아간다.
+  update(id, { query: '검색어만' })
+  assert.equal(find(id).status, 'saved')
+  update(id, { title: '저장 뒤에 고친 제목' })
+  assert.equal(find(id).status, 'review')
   assert.equal(find(id).savedAs, 'a.m4a')
   remove(id)
   assert.deepEqual(useQueue.getState().items, [])
