@@ -89,9 +89,14 @@ function* offsetSlots(b: Uint8Array, moov: Box) {
 const readSlot = (v: DataView, s: { pos: number; wide: boolean }) =>
   s.wide ? Number(v.getBigUint64(s.pos)) : v.getUint32(s.pos)
 
+/** 크기 상한을 넘으면 Mp4Error. 파일을 읽기 전에 크기만으로도 거를 수 있게 따로 둔다. */
+export function checkSize(size: number): void {
+  if (size > MAX_BYTES) throw new Mp4Error('200MB보다 큰 파일은 지원하지 않아요')
+}
+
 /** 구조를 검사하고 오디오 길이(초)를 돌려준다. 지원하지 않으면 Mp4Error. */
 export function inspect(b: Uint8Array): { duration: number } {
-  if (b.length > MAX_BYTES) throw new Mp4Error('200MB보다 큰 파일은 지원하지 않아요')
+  checkSize(b.length)
   const top = boxes(b, 0, b.length)
   if (top.some((x) => x.type === 'moof')) {
     throw new Mp4Error('이 형식(분할 MP4)은 지원하지 않아요. ffmpeg로 `-c copy` 재다중화한 뒤 다시 넣어 주세요')

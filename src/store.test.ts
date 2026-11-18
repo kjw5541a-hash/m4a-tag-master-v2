@@ -1,5 +1,6 @@
 // 큐 스토어 테스트 (기획서 3장 S1, 5.1, 9장). 실제 네트워크는 쓰지 않고 fetch를 stub한다.
 // 조회 결과가 URL별로 세션 캐시되므로 테스트마다 제목·검색어를 다르게 한다.
+// iTunes 호출 제한(분당 20회)은 이 파일 안에서 공유된다. 지금 18회라, 조회를 더하면 제한에 걸려 한참 기다린다.
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { useQueue } from './store.ts'
@@ -43,16 +44,18 @@ const LRCLIB_HIT = {
 }
 
 interface Stub {
-  itunes?: (term: string) => unknown
-  artwork?: () => Response
+  itunes?: (term: string) => unknown | Promise<unknown>
+  artwork?: (url: URL) => Response | Promise<Response>
   search?: unknown[]
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
 // iTunes·아트워크·LRCLIB를 한꺼번에 흉내 낸다. LRCLIB get은 항상 404.
 function stubAll(t: TestContext, { itunes = () => ITUNES, artwork = () => new Response(PNG), search = [] }: Stub = {}) {
-  return stubFetch(t, (url) => {
-    if (url.hostname === 'itunes.apple.com') return json(itunes(url.searchParams.get('term')!))
-    if (url.hostname === 'is1-ssl.mzstatic.com') return artwork()
+  return stubFetch(t, async (url) => {
+    if (url.hostname === 'itunes.apple.com') return json(await itunes(url.searchParams.get('term')!))
+    if (url.hostname === 'is1-ssl.mzstatic.com') return artwork(url)
     if (url.pathname === '/api/get') return new Response('', { status: 404 })
     return json(search)
   })
@@ -180,4 +183,100 @@ test('update·markSaved·remove', async (t) => {
   assert.equal(find(id).savedAs, 'a.m4a')
   remove(id)
   assert.deepEqual(useQueue.getState().items, [])
+})
+
+test('느린 조회가 나중에 끝나도 더 새 조회의 결과를 덮어쓰지 않는다', async (t) => {
+  const one = (trackId: number) => ({ results: [{ ...ITUNES.results[1], trackId }] })
+  stubAll(t, {
+    itunes: async (term) => {
+      if (term !== 'slowq' && term !== 'fastq') return ITUNES
+      if (term === 'slowq') await sleep(150)
+      return one(term === 'slowq' ? 101 : 102)
+    },
+  })
+  const id = await add(m4a('Stale Band - Stale Song.m4a'))
+  const slow = useQueue.getState().lookup(id, 'slowq')
+  await useQueue.getState().lookup(id, 'fastq')
+  await slow
+  assert.equal(find(id).edit!.candidate!.trackId, 102)
+  assert.equal(find(id).edit!.query, 'fastq')
+  assert.equal(find(id).status, 'review')
+})
+
+test('조회 중에 저장 표시를 하면 조회가 끝나도 저장됨으로 남는다', async (t) => {
+  stubAll(t, {
+    itunes: async (term) => {
+      if (term === 'savedq') await sleep(100)
+      return ITUNES
+    },
+  })
+  const id = await add(m4a('Saved Band - Saved Song.m4a'))
+  const pending = useQueue.getState().lookup(id, 'savedq')
+  useQueue.getState().markSaved(id, 'out.m4a')
+  await pending
+  assert.equal(find(id).status, 'saved')
+  assert.equal(find(id).savedAs, 'out.m4a')
+})
+
+test('조회 중에 후보를 고르면 그 조회는 버려지고 검색 중이 끝난다', async (t) => {
+  stubAll(t, {
+    itunes: async (term) => {
+      if (term === 'busyq') await sleep(100)
+      return ITUNES
+    },
+  })
+  const id = await add(m4a('Busy Band - Busy Song.m4a'))
+  const busy = useQueue.getState().lookup(id, 'busyq')
+  await useQueue.getState().choose(id, find(id).edit!.candidates[1]!)
+  assert.equal(find(id).status, 'review')
+  await busy
+  assert.equal(find(id).status, 'review')
+  assert.equal(find(id).edit!.candidate!.trackId, 2)
+})
+
+test('choose를 연달아 눌러 앞 요청이 늦게 끝나도 마지막 선택이 남는다', async (t) => {
+  const OTHER = makeImage(16, 16, 'png') as Uint8Array<ArrayBuffer>
+  const cand = (trackId: number, name: string) => ({
+    trackId,
+    artistName: 'Lee Juck',
+    trackName: name,
+    collectionName: `앨범${trackId}`,
+    trackTimeMillis: 263000,
+    artworkUrl100: `https://is1-ssl.mzstatic.com/image/thumb/${name}/100x100bb.jpg`,
+  })
+  stubAll(t, {
+    itunes: () => ({ results: [cand(1, 'firstart'), cand(2, 'slowart'), cand(3, 'lastart')] }),
+    artwork: async (url) => {
+      if (!url.pathname.includes('slowart')) return new Response(PNG)
+      await sleep(150)
+      return new Response(OTHER)
+    },
+  })
+  const id = await add(m4a('Twice Band - Twice Song.m4a'))
+  const [, second, third] = find(id).edit!.candidates
+  const slow = useQueue.getState().choose(id, second!)
+  await useQueue.getState().choose(id, third!)
+  await slow
+  const e = find(id).edit!
+  assert.equal(e.candidate!.trackId, 3)
+  assert.equal(e.album, '앨범3')
+  assert.deepEqual(e.cover, PNG)
+})
+
+test('200MB를 넘는 파일은 읽지 않고 실패 처리한다', async () => {
+  useQueue.setState({ items: [] })
+  let read = false
+  const huge = {
+    name: 'huge.m4a',
+    size: 200 * 2 ** 20 + 1,
+    arrayBuffer() {
+      read = true
+      throw new Error('읽으면 안 된다')
+    },
+  } as unknown as File
+  const { ids, done } = useQueue.getState().addFiles([huge])
+  await done
+  assert.equal(find(ids[0]!).status, 'failed')
+  assert.match(find(ids[0]!).error!, /200MB/)
+  assert.equal(read, false)
 })

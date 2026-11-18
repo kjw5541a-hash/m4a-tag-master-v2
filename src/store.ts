@@ -1,6 +1,6 @@
 // 곡 큐: 파일 읽기 → 자동 조회 → 확인 필요 (기획서 3장 S1, 5.1, 9장). 화면은 이 스토어만 읽고 움직인다.
 import { create } from 'zustand'
-import { inspect, readTags, Mp4Error } from './mp4.ts'
+import { checkSize, inspect, readTags, Mp4Error } from './mp4.ts'
 import { parseSource, type ParsedSource } from './lookup/query.ts'
 import { searchItunes, type Candidate } from './lookup/itunes.ts'
 import { fetchBytes, LookupError } from './lookup/http.ts'
@@ -44,6 +44,15 @@ const lookupMessage = (e: unknown) => (e instanceof LookupError ? e.message : '�
 // 커버를 못 받아도 조회는 이어 간다.
 const downloadCover = (c: Candidate) => (c.artworkUrl ? fetchBytes(c.artworkUrl).catch(() => undefined) : undefined)
 
+// 항목별 요청 번호. 조회·선택을 시작할 때마다 올린다. 기다린 뒤 번호가 바뀌었으면 더 새 요청이 있으니 결과를 버린다.
+// update·remove·markSaved는 올리지 않는다.
+const latest = new Map<string, number>()
+function begin(id: string): () => boolean {
+  const n = (latest.get(id) ?? 0) + 1
+  latest.set(id, n)
+  return () => latest.get(id) === n
+}
+
 export const useQueue = create<Queue>()((set, get) => {
   const item = (id: string) => get().items.find((i) => i.id === id)
   const patch = (id: string, p: Partial<Item>) =>
@@ -52,15 +61,16 @@ export const useQueue = create<Queue>()((set, get) => {
   const patchEdit = (id: string, fn: (e: Edit) => Edit) =>
     set((s) => ({ items: s.items.map((i) => (i.id === id && i.edit ? { ...i, edit: fn(i.edit) } : i)) }))
 
-  const lyricsFor = async (id: string) => {
+  const lyricsFor = async (id: string, current: () => boolean) => {
     const { source, edit } = item(id) ?? {}
     if (!source || !edit) return
     const r = await findLyrics({ title: edit.title, artist: edit.artist, itunes: edit.candidate, fileDurationSec: source.duration })
-    patchEdit(id, (e) => applyLyrics(e, r))
+    if (current()) patchEdit(id, (e) => applyLyrics(e, r))
   }
 
   const load = async (id: string, file: File) => {
     try {
+      checkSize(file.size)
       const bytes = new Uint8Array(await file.arrayBuffer())
       const { duration } = inspect(bytes)
       const source: Source = { fileName: file.name, bytes, duration, tags: readTags(bytes) }
@@ -91,34 +101,41 @@ export const useQueue = create<Queue>()((set, get) => {
     async lookup(id, query) {
       const { source, parsed } = item(id) ?? {}
       if (!source || !parsed) return
+      const current = begin(id)
       patch(id, { status: 'searching', error: undefined })
       let error: string | undefined
       try {
         const found = await searchItunes(query ? [query] : parsed.queries)
+        if (!current()) return
         const first = found.candidates[0]
         const artwork = first && (await downloadCover(first))
+        if (!current()) return
         patchEdit(id, (e) => {
           const next = { ...e, query: found.query, candidates: found.candidates }
           return first ? selectCandidate(next, source, first, artwork) : next
         })
-        await lyricsFor(id)
+        await lyricsFor(id, current)
       } catch (e) {
         error = lookupMessage(e)
       }
-      patch(id, { status: 'review', error })
+      // 조회 중에 저장됐으면 상태를 되돌리지 않는다.
+      if (current() && item(id)?.status === 'searching') patch(id, { status: 'review', error })
     },
 
     async choose(id, c) {
       const source = item(id)?.source
       if (!source) return
+      const current = begin(id)
       const artwork = await downloadCover(c)
+      if (!current()) return
       patchEdit(id, (e) => selectCandidate(e, source, c, artwork))
-      if (item(id)?.edit?.lyricsManual) return
       try {
-        await lyricsFor(id)
+        if (!item(id)?.edit?.lyricsManual) await lyricsFor(id, current)
       } catch (e) {
-        patch(id, { error: lookupMessage(e) })
+        if (current()) patch(id, { error: lookupMessage(e) })
       }
+      // 조회 중에 고른 경우, 그 조회는 버려졌으니 여기서 '검색 중'을 끝낸다.
+      if (current() && item(id)?.status === 'searching') patch(id, { status: 'review' })
     },
 
     update: (id, p) => patchEdit(id, (e) => ({ ...e, ...p })),
