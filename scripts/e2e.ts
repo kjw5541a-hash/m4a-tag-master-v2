@@ -2,12 +2,13 @@
 // 사용: npm run test:e2e (빌드가 먼저 끝나 있어야 한다)
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium } from 'playwright-core'
 import { readTags } from '../src/mp4.ts'
-import { makeImage, makeM4a } from '../src/testing.ts'
+import { parseAnalysis } from '../src/schema.ts'
+import { ffmpeg, makeImage } from '../src/testing.ts'
 
 const ORIGIN = 'http://localhost:4174'
 const FILE_NAME = '1theK (원더케이) - Lee Juck(이적) _ running on the sky(하늘을 달리다).m4a'
@@ -57,14 +58,15 @@ async function waitForServer() {
 async function run() {
   const dir = mkdtempSync(join(tmpdir(), 'm4a-e2e-'))
   const input = join(dir, FILE_NAME)
-  writeFileSync(
+  // 1초마다 비프음이 나는 12초 픽스처: 분석이 BPM·코드를 낼 수 있게 한다.
+  ffmpeg(
+    '-f', 'lavfi', '-i', 'sine=frequency=440:beep_factor=4:duration=12',
+    '-c:a', 'aac',
+    '-metadata', 'title=Lee Juck(이적) _ running on the sky(하늘을 달리다)',
+    '-metadata', 'artist=1theK (원더케이)',
+    '-metadata', 'album=1theK (원더케이)',
+    '-movflags', '+faststart',
     input,
-    makeM4a(
-      '-metadata', 'title=Lee Juck(이적) _ running on the sky(하늘을 달리다)',
-      '-metadata', 'artist=1theK (원더케이)',
-      '-metadata', 'album=1theK (원더케이)',
-      '-movflags', '+faststart',
-    ),
   )
 
   const browser = await chromium.launch({ channel: 'chrome', headless: true })
@@ -107,11 +109,11 @@ async function run() {
     assert.equal(await page.getByLabel('가수').inputValue(), '이적')
     assert.equal(await page.getByLabel('앨범').inputValue(), '2적')
 
-    // 3초짜리 사인파와 iTunes 263초의 차이. +260초.
+    // 12초짜리 픽스처와 iTunes 263초의 차이. +251초.
     const candidate = page.getByRole('button', { name: /Running on the Sky/ })
     const candidateText = await candidate.innerText()
     assert.match(candidateText, /Running on the Sky/)
-    assert.match(candidateText, /\+260초/)
+    assert.match(candidateText, /\+251초/)
     const lyricsRow = page.getByRole('button', { name: /가사/ })
     assert.match(await lyricsRow.innerText(), /일반 ✓ · 싱크 ✓/)
     assert.match(await lyricsRow.innerText(), /두근거렸지/)
@@ -123,18 +125,39 @@ async function run() {
     await page.getByText('싱크 가사 있음').waitFor()
     await page.getByRole('button', { name: '닫기' }).click()
 
-    const [download] = await Promise.all([
-      page.waitForEvent('download'),
-      page.getByRole('button', { name: '저장 · 공유' }).click(),
-    ])
-    assert.equal(download.suggestedFilename(), '이적 - 하늘을 달리다.m4a')
-    const tags = readTags(new Uint8Array(readFileSync((await download.path())!)))
+    // 분석 카드가 BPM을 보여 줄 때까지 기다린다(Chrome에서 진짜 분석이 돈다).
+    await page.getByText('분석 (참고용)').waitFor()
+    await page.getByText(/^BPM \d/).waitFor({ timeout: 60_000 })
+
+    const save = async () => {
+      const [download] = await Promise.all([
+        page.waitForEvent('download'),
+        page.getByRole('button', { name: '저장 · 공유' }).click(),
+      ])
+      assert.equal(download.suggestedFilename(), '이적 - 하늘을 달리다.m4a')
+      return readTags(new Uint8Array(readFileSync((await download.path())!)))
+    }
+
+    const tags = await save()
     assert.equal(tags.title, '하늘을 달리다')
     assert.equal(tags.artist, '이적')
     assert.equal(tags.album, '2적')
     assert.equal(tags.lyrics, '두근거렸지')
     assert.equal(tags.lrc, '[00:01.00]두근거렸지')
     assert.deepEqual(tags.cover, COVER)
+    const analysis = parseAnalysis(tags.analysis)
+    assert.ok(analysis, '저장한 파일에 v1 ANALYSIS가 있어야 해요')
+    assert.equal(analysis.version, 1)
+    assert.ok(analysis.bpm > 0)
+    assert.ok(analysis.chords.length > 0)
+    console.log(`분석: bpm ${analysis.bpm}, key ${analysis.key} ${analysis.scale}, chords ${analysis.chords.length}`)
+
+    // [×2]를 누르고 다시 저장하면 파일의 bpm이 두 배이고 edited가 true다.
+    await page.getByRole('button', { name: '×2' }).click()
+    const doubled = parseAnalysis((await save()).analysis)
+    assert.ok(doubled)
+    assert.equal(doubled.bpm, Math.round(analysis.bpm * 20) / 10)
+    assert.equal(doubled.edited, true)
 
     await page.getByRole('button', { name: /큐/ }).click()
     await page.getByText('저장됨').waitFor()

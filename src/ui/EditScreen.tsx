@@ -5,6 +5,7 @@ import { formatDiff } from '../edit.ts'
 import { fetchBytes } from '../lookup/http.ts'
 import { buildOutput, shareOrDownload } from '../save.ts'
 import { STATUS_LABEL, useQueue } from '../store.ts'
+import AnalysisCard from './AnalysisCard.tsx'
 import CandidateSheet from './CandidateSheet.tsx'
 import LyricsSheet from './LyricsSheet.tsx'
 import { CoverThumb } from './QueueScreen.tsx'
@@ -76,11 +77,13 @@ export default function EditScreen({ id, onBack }: { id: string; onBack(): void 
       () => setNotice({ text: '커버를 불러오지 못했어요' }),
     )
   const original = src.tags.cover
+  // 분석이 끝나야 저장한다. 안 그러면 분석이 빠진 파일이 나간다.
+  const analyzing = item.analysisJob?.state === 'waiting' || item.analysisJob?.state === 'running'
   const diff = (sec: number) => (sec > 0 ? ` · ${formatDiff(sec - src.duration)}` : '')
 
   // 클릭 핸들러 안에서 await 없이 파일을 만들고 바로 공유를 연다. 그래야 공유 권한(사용자 제스처)이 유지된다.
   const save = () => {
-    const key = JSON.stringify([e.title, e.artist, e.album, e.lyrics, e.lrc])
+    const key = JSON.stringify([e.title, e.artist, e.album, e.lyrics, e.lrc, e.analysis])
     let file = built.current?.key === key && built.current.cover === e.cover ? built.current.file : undefined
     if (!file) {
       try {
@@ -180,6 +183,8 @@ export default function EditScreen({ id, onBack }: { id: string; onBack(): void 
           <span aria-hidden>›</span>
         </button>
 
+        <AnalysisCard id={id} job={item.analysisJob} analysis={e.analysis} />
+
         {item.error && (
           <div className="flex items-center gap-2">
             <p className="flex-1 text-red-600">{item.error}</p>
@@ -209,8 +214,8 @@ export default function EditScreen({ id, onBack }: { id: string; onBack(): void 
                 )}
               </p>
             )}
-            <button className="min-h-12 w-full rounded-xl bg-blue-600 font-medium text-white disabled:opacity-50" disabled={saving} onClick={save}>
-              저장 · 공유
+            <button className="min-h-12 w-full rounded-xl bg-blue-600 font-medium text-white disabled:opacity-50" disabled={saving || analyzing} onClick={save}>
+              {analyzing ? '분석 기다리는 중…' : '저장 · 공유'}
             </button>
           </div>
         </div>
