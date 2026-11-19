@@ -173,7 +173,10 @@ export default function EditScreen({ id, onBack }: { id: string; onBack(): void 
           className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-gray-200 p-3 text-left disabled:opacity-50"
           onClick={() => setSheet('lyrics')}
         >
-          <span className="flex-1">{`가사  일반 ${e.lyrics ? '✓' : '없음'} · 싱크 ${e.lrc ? '✓' : '없음'}`}</span>
+          <span className="min-w-0 flex-1">
+            <span className="block">{`가사  일반 ${e.lyrics ? '✓' : '없음'} · 싱크 ${e.lrc ? '✓' : '없음'}`}</span>
+            <span className="block truncate text-sm text-gray-500">{e.lyrics.split('\n').find((l) => l.trim())}</span>
+          </span>
           <span aria-hidden>›</span>
         </button>
 

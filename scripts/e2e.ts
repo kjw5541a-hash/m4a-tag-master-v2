@@ -112,7 +112,16 @@ async function run() {
     const candidateText = await candidate.innerText()
     assert.match(candidateText, /Running on the Sky/)
     assert.match(candidateText, /\+260초/)
-    assert.match(await page.getByRole('button', { name: /가사/ }).innerText(), /일반 ✓ · 싱크 ✓/)
+    const lyricsRow = page.getByRole('button', { name: /가사/ })
+    assert.match(await lyricsRow.innerText(), /일반 ✓ · 싱크 ✓/)
+    assert.match(await lyricsRow.innerText(), /두근거렸지/)
+
+    // 가사 시트 맨 위에 지금 들어 있는 가사가 보인다.
+    await lyricsRow.click()
+    const current = page.getByLabel('지금 가사')
+    assert.match(await current.innerText(), /두근거렸지/)
+    await page.getByText('싱크 가사 있음').waitFor()
+    await page.getByRole('button', { name: '닫기' }).click()
 
     const [download] = await Promise.all([
       page.waitForEvent('download'),

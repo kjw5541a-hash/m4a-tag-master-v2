@@ -21,6 +21,15 @@ export default function LyricsSheet({ edit, onChange, onClose }: Props) {
 
   return (
     <Sheet title="가사" onClose={onClose}>
+      {edit.lrc && <p className="text-sm text-gray-500">싱크 가사 있음</p>}
+      <div
+        role="region"
+        aria-label="지금 가사"
+        tabIndex={0}
+        className="max-h-[10lh] overflow-y-auto rounded-lg bg-gray-50 p-3 text-sm whitespace-pre-wrap"
+      >
+        {edit.lyrics || '가사 없음'}
+      </div>
       <ul>
         {edit.lyricsCandidates.map((c) => {
           const { lyrics, lrc } = candidateLyrics(c)
