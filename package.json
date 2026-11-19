@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "check:analysis": "node scripts/check-analysis.ts",
-    "test": "node --test \"src/**/*.test.ts\"",
+    "test": "node --test \"src/**/*.test.ts\" \"scripts/**/*.test.ts\"",
+    "evaluate": "node scripts/evaluate.ts",
     "lint": "oxlint",
     "test:e2e": "npm run build && node scripts/e2e.ts"
   },
