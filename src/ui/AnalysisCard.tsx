@@ -23,11 +23,14 @@ export default function AnalysisCard({ id, job, analysis }: { id: string; job?: 
   else if (job.state === 'running') body = <p>{`분석 중 ${Math.round((job.progress ?? 0) * 100)}%`}</p>
   else if (job.state === 'done' && analysis) {
     // 값이 바뀌면 사용자가 고친 것으로 쓴다. 분석이 도는 동안에는 이 컨트롤을 그리지 않아, 늦게 온 결과가 사용자 수정을 덮지 못한다.
-    const change = (patch: Parameters<typeof editAnalysis>[1]) => update(id, { analysis: editAnalysis(analysis, patch) })
+    const change = (patch: Parameters<typeof editAnalysis>[1]) => {
+      const next = editAnalysis(analysis, patch)
+      if (next !== analysis) update(id, { analysis: next }) // 범위 밖 bpm(×2가 1000을 넘는 등)은 아무것도 바뀌지 않으니 저장된 곡을 '다시 확인'으로 돌리지 않는다
+    }
     // 입력 중에는 값을 쓰지 않고, 입력란을 벗어날 때 한 번만 반영한다. 잘못된 값이면 되돌린다.
     const commitBpm = (el: HTMLInputElement) => {
       const v = Math.round(el.valueAsNumber * 10) / 10
-      if (v > 0 && v !== analysis.bpm) change({ bpm: v })
+      if (v > 0 && v < 1000 && v !== analysis.bpm) change({ bpm: v })
       else el.value = String(analysis.bpm)
     }
     body = (

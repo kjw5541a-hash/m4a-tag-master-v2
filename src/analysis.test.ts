@@ -109,3 +109,17 @@ test('editAnalysis: bpm은 소수 첫째 자리로 반올림하고 edited true, 
   assert.equal(k.bpm, a.bpm)
   assert.equal(a.edited, false) // 원본은 건드리지 않는다
 })
+
+test('editAnalysis: 범위 밖 bpm(0 이하, 1000 이상, 무한대)은 무시하고, 그것뿐이면 입력을 그대로 돌려준다', () => {
+  const a = toAnalysis(fake([{ start: 0, end: 1, chord: 'N' }]), 1, '2026-11-19T00:00:00.000Z')
+  assert.equal(editAnalysis(a, { bpm: 1200 }), a)
+  assert.equal(editAnalysis(a, { bpm: Infinity }), a)
+  assert.equal(editAnalysis(a, { bpm: 0 }), a)
+  const mixed = editAnalysis(a, { bpm: 1200, key: 'A#' }) // 나머지 필드는 적용, bpm은 이전 값
+  assert.equal(mixed.key, 'A#')
+  assert.equal(mixed.bpm, a.bpm)
+  assert.equal(mixed.edited, true)
+  const top = editAnalysis(a, { bpm: 999.94 })
+  assert.equal(top.bpm, 999.9)
+  assert.equal(top.edited, true)
+})

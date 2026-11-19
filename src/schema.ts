@@ -49,13 +49,17 @@ export function parseAnalysis(text: string | undefined): MappAnalysisV1 | undefi
 }
 
 // 사람이 bpm·key·scale을 고친 값. bpm은 소수 첫째 자리로 반올림하고 edited를 true로 둔다.
+// 반올림한 bpm이 유한하지 않거나 (0, 1000) 밖이면 무시한다(오타·Infinity가 파일에 "null"로 저장되는 것을 막음). 반영할 필드가 없으면 입력을 그대로 돌려준다.
 export function editAnalysis(
   a: MappAnalysisV1,
   patch: Partial<Pick<MappAnalysisV1, 'bpm' | 'key' | 'scale'>>,
 ): MappAnalysisV1 {
+  const rounded = patch.bpm === undefined ? NaN : Math.round(patch.bpm * 10) / 10
+  const bpm = rounded > 0 && rounded < 1000 ? rounded : undefined // NaN·Infinity는 둘 다 거짓
+  if (bpm === undefined && patch.key === undefined && patch.scale === undefined) return a
   return {
     ...a,
-    bpm: Math.round((patch.bpm ?? a.bpm) * 10) / 10,
+    bpm: bpm ?? a.bpm,
     key: patch.key ?? a.key,
     scale: patch.scale ?? a.scale,
     edited: true,
