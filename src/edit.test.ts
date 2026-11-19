@@ -7,6 +7,7 @@ import type { LyricsCandidate } from './lookup/lyrics.ts'
 import { imageSize, isSquare } from './cover.ts'
 import { applyLyrics, formatDiff, initialEdit, outputName, selectCandidate, toTags, type Source } from './edit.ts'
 import { buildOutput } from './save.ts'
+import type { MappAnalysisV1 } from './schema.ts'
 import { makeImage, makeM4a } from './testing.ts'
 
 const wide = makeImage(1280, 720, 'mjpeg')
@@ -126,6 +127,39 @@ test('toTags: 기존 분석값을 지키며 편집값을 태그로 바꾼다', (
   assert.equal(tags.title, '하늘을 달리다')
   assert.equal(tags.album, '2적')
   assert.equal(tags.lrc, '[00:01.00]가사')
+})
+
+const analysis: MappAnalysisV1 = {
+  version: 1,
+  analyzer: 'test',
+  analyzedAt: '2026-01-01T00:00:00.000Z',
+  duration: 3,
+  bpm: 61,
+  bpmConfidence: 1,
+  key: 'C',
+  scale: 'major',
+  keyStrength: 0.5,
+  edited: false,
+  topProgressions: [],
+  chords: [],
+}
+
+test('initialEdit: 유효한 v1 ANALYSIS는 edit.analysis가 된다', () => {
+  const e = initialEdit(source({ ...v2Tags, analysis: JSON.stringify(analysis) }), parsed)
+  assert.deepEqual(e.analysis, analysis)
+})
+
+test('initialEdit·toTags: 모르는 버전의 ANALYSIS는 edit에 없고 원문 그대로 다시 쓴다', () => {
+  const src = source({ ...v2Tags, analysis: '{"version":2}' })
+  const e = initialEdit(src, parsed)
+  assert.equal(e.analysis, undefined)
+  assert.equal(toTags(e, src).analysis, '{"version":2}')
+})
+
+test('toTags: edit.analysis가 있으면 그것을 JSON으로 쓴다', () => {
+  const src = source(v2Tags)
+  const tags = toTags({ ...initialEdit(src, parsed), analysis }, src)
+  assert.equal(tags.analysis, JSON.stringify(analysis))
 })
 
 test('outputName: 가수 - 제목.m4a, 금지 문자 삭제, NFC, 120자', () => {

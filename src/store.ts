@@ -5,6 +5,7 @@ import { parseSource, type ParsedSource } from './lookup/query.ts'
 import { searchItunes, type Candidate } from './lookup/itunes.ts'
 import { fetchBytes, LookupError } from './lookup/http.ts'
 import { findLyrics } from './lookup/lyrics.ts'
+import { AnalysisError, MAX_ANALYSIS_SEC, runAnalysis } from './runAnalysis.ts'
 import { applyLyrics, initialEdit, selectCandidate, type Edit, type Source } from './edit.ts'
 
 export type Status = 'reading' | 'searching' | 'review' | 'saved' | 'failed'
@@ -17,6 +18,8 @@ export const STATUS_LABEL: Record<Status, string> = {
   failed: '실패',
 }
 
+export type AnalysisState = 'waiting' | 'running' | 'done' | 'failed' | 'skipped'
+
 export interface Item {
   id: string
   fileName: string
@@ -27,6 +30,7 @@ export interface Item {
   parsed?: ParsedSource
   edit?: Edit
   savedAs?: string
+  analysisJob?: { state: AnalysisState; progress?: number; message?: string }
 }
 
 interface Queue {
@@ -34,6 +38,7 @@ interface Queue {
   addFiles(files: File[]): { ids: string[]; done: Promise<void> }
   lookup(id: string, query?: string): Promise<void>
   choose(id: string, c: Candidate): Promise<void>
+  analyze(id: string): Promise<void>
   update(id: string, patch: Partial<Edit>): void
   remove(id: string): void
   markSaved(id: string, savedAs: string): void
@@ -53,6 +58,25 @@ function begin(id: string): () => boolean {
   return () => latest.get(id) === n
 }
 
+const TOO_LONG = '분석은 15분 이하 곡만 할 수 있어요. 태그는 저장할 수 있어요'
+
+// 파일에 분석이 이미 있으면 그대로 쓰고, 15분을 넘으면 건너뛴다.
+export function initialJob(edit: Edit, durationSec: number): { state: AnalysisState; message?: string } {
+  if (edit.analysis) return { state: 'done' }
+  return durationSec > MAX_ANALYSIS_SEC ? { state: 'skipped', message: TOO_LONG } : { state: 'waiting' }
+}
+
+let runner: typeof runAnalysis = runAnalysis
+/** 테스트용: 분석 실행기를 바꾼다. */
+export const setAnalysisRunner = (fn: typeof runAnalysis) => {
+  runner = fn
+}
+
+// 분석은 한 번에 한 곡: 메모리 때문에 곡마다 앞 분석이 끝나기를 기다린다. 사슬의 각 고리는 reject하지 않는다.
+let analysisTail: Promise<void> = Promise.resolve()
+// 항목별 분석 요청 번호. lookup의 begin과는 따로 센다(검색을 다시 해도 분석을 버리지 않는다).
+const analysisLatest = new Map<string, number>()
+
 export const useQueue = create<Queue>()((set, get) => {
   const item = (id: string) => get().items.find((i) => i.id === id)
   const patch = (id: string, p: Partial<Item>) =>
@@ -68,18 +92,24 @@ export const useQueue = create<Queue>()((set, get) => {
     if (current()) patchEdit(id, (e) => applyLyrics(e, r))
   }
 
-  const load = async (id: string, file: File) => {
+  // 분석은 검색과 동시에 시작하고 기다리지 않는다. 시작한 분석은 analyses에 넣어 호출한 쪽이 기다리게 한다.
+  const load = async (id: string, file: File, analyses: Promise<void>[]) => {
+    let waiting = false
     try {
       checkSize(file.size)
       const bytes = new Uint8Array(await file.arrayBuffer())
       const { duration } = inspect(bytes)
       const source: Source = { fileName: file.name, bytes, duration, tags: readTags(bytes) }
       const parsed = parseSource(file.name, source.tags)
-      patch(id, { source, parsed, edit: initialEdit(source, parsed), status: 'searching' })
+      const edit = initialEdit(source, parsed)
+      const analysisJob = initialJob(edit, duration)
+      patch(id, { source, parsed, edit, analysisJob, status: 'searching' })
+      waiting = analysisJob.state === 'waiting'
     } catch (e) {
       patch(id, { status: 'failed', error: e instanceof Mp4Error ? e.message : '파일을 읽지 못했어요' })
       return
     }
+    if (waiting) analyses.push(get().analyze(id))
     await get().lookup(id)
   }
 
@@ -93,7 +123,9 @@ export const useQueue = create<Queue>()((set, get) => {
       }))
       const done = (async () => {
         // 한 곡씩 차례로: iTunes 호출 제한과 메모리 때문에 병렬로 하지 않는다.
-        for (const [i, file] of files.entries()) await load(ids[i]!, file)
+        const analyses: Promise<void>[] = []
+        for (const [i, file] of files.entries()) await load(ids[i]!, file, analyses)
+        await Promise.all(analyses)
       })()
       return { ids, done }
     },
@@ -138,6 +170,46 @@ export const useQueue = create<Queue>()((set, get) => {
       }
       // 위에서 켠 '검색 중'을 끝낸다. 조회 중에 고른 경우 그 조회는 버려졌으니 여기서 끝내는 것이기도 하다.
       if (current() && item(id)?.status === 'searching') patch(id, { status: 'review' })
+    },
+
+    analyze(id) {
+      const source = item(id)?.source
+      if (!source) return Promise.resolve()
+      const n = (analysisLatest.get(id) ?? 0) + 1
+      analysisLatest.set(id, n)
+      const current = () => analysisLatest.get(id) === n
+      // 컨테이너 길이로 먼저 거른다. 디코드는 메모리를 많이 쓰므로 15분 넘는 곡은 디코드하지 않는다.
+      if (source.duration > MAX_ANALYSIS_SEC) {
+        patch(id, { analysisJob: { state: 'skipped', message: TOO_LONG } })
+        return Promise.resolve()
+      }
+      patch(id, { analysisJob: { state: 'waiting' } })
+      const run = analysisTail.then(async () => {
+        // 기다리는 사이 더 새 요청이 생겼거나 곡이 지워졌으면 돌지 않는다.
+        if (!current() || !item(id)) return
+        patch(id, { analysisJob: { state: 'running', progress: 0 } })
+        try {
+          const analysis = await runner(source.bytes, (progress) => {
+            if (current()) patch(id, { analysisJob: { state: 'running', progress } })
+          })
+          if (!current()) return
+          // 분석이 파일에 들어갈 값이므로, 저장된 곡은 화면과 파일이 달라진 것이니 다시 확인하게 한다.
+          set((s) => ({
+            items: s.items.map((i) =>
+              i.id === id && i.edit
+                ? { ...i, edit: { ...i.edit, analysis }, analysisJob: { state: 'done' }, status: i.status === 'saved' ? 'review' : i.status }
+                : i,
+            ),
+          }))
+        } catch (e) {
+          if (current()) {
+            const message = e instanceof AnalysisError ? e.message : '분석 중 메모리가 부족했어요'
+            patch(id, { analysisJob: { state: 'failed', message } })
+          }
+        }
+      })
+      analysisTail = run
+      return run
     },
 
     update: (id, p) =>

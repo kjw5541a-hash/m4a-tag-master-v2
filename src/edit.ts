@@ -4,6 +4,7 @@ import type { ParsedSource } from './lookup/query.ts'
 import type { Candidate } from './lookup/itunes.ts'
 import { candidateLyrics, type LyricsCandidate } from './lookup/lyrics.ts'
 import { isSquare } from './cover.ts'
+import { parseAnalysis, type MappAnalysisV1 } from './schema.ts'
 
 export interface Source {
   fileName: string
@@ -25,6 +26,7 @@ export interface Edit {
   lyricsManual: boolean
   lyricsCandidates: LyricsCandidate[]
   cover?: Uint8Array
+  analysis?: MappAnalysisV1
 }
 
 export function initialEdit(src: Source, parsed: ParsedSource): Edit {
@@ -43,6 +45,7 @@ export function initialEdit(src: Source, parsed: ParsedSource): Edit {
     lyricsManual: lyrics !== '' || !!tags.lrc,
     lyricsCandidates: [],
     cover: tags.cover,
+    analysis: parseAnalysis(tags.analysis),
   }
 }
 
@@ -59,10 +62,10 @@ export function applyLyrics(e: Edit, r: { adopted?: LyricsCandidate; candidates:
   return { ...next, ...(r.adopted ? candidateLyrics(r.adopted) : { lyrics: '', lrc: undefined }) }
 }
 
-// 분석값(analysis)은 M3 전까지 만들지 않으므로 기존 값을 그대로 보존한다.
+// edit.analysis가 없으면 파일의 ANALYSIS를 원문 그대로 보존한다(v1이 아니어도 지우지 않는다).
 export function toTags(e: Edit, src: Source): Tags {
   const { title, artist, album, lyrics, lrc, cover } = e
-  return { title, artist, album, lyrics, lrc, cover, analysis: src.tags.analysis }
+  return { title, artist, album, lyrics, lrc, cover, analysis: e.analysis ? JSON.stringify(e.analysis) : src.tags.analysis }
 }
 
 // 파일명에 못 쓰는 문자를 지우고 NFC로 맞춘다.

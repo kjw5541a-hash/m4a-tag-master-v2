@@ -3,8 +3,14 @@
 // iTunes 호출 제한(분당 20회)은 이 파일 안에서 공유된다. 지금 18회라, 조회를 더하면 제한에 걸려 한참 기다린다.
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { useQueue } from './store.ts'
+import { setAnalysisRunner, useQueue } from './store.ts'
+import { AnalysisError } from './runAnalysis.ts'
 import { makeImage, makeM4a, stubFetch } from './testing.ts'
+
+// 이 파일은 조회를 시험한다. 분석은 Node의 Web Audio 유무에 기대지 않도록 곧바로 실패시킨다.
+setAnalysisRunner(async () => {
+  throw new AnalysisError('test')
+})
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
