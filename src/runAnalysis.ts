@@ -21,10 +21,20 @@ const STAGE_RANGE: Record<string, [number, number]> = {
 // 디코드해서 채널 평균 모노로 만든다. AudioBuffer는 이 함수가 끝나면 버려진다.
 async function decodeMono(bytes: Uint8Array): Promise<{ signal: Float32Array; durationSec: number }> {
   let decoded: AudioBuffer
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    decoded = await new OfflineAudioContext(1, 1, SAMPLE_RATE).decodeAudioData(bytes.slice().buffer) // 복사본: 원본을 떼어 가지 않는다
+    // decodeAudioData가 끝내 안 돌아오면 분석 큐와 저장이 영영 막히므로 워커 단계와 같은 시간 제한을 건다.
+    const hang = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('decode timeout')), WATCHDOG_MS)
+    })
+    decoded = await Promise.race([
+      new OfflineAudioContext(1, 1, SAMPLE_RATE).decodeAudioData(bytes.slice().buffer), // 복사본: 원본을 떼어 가지 않는다
+      hang,
+    ])
   } catch {
     throw new AnalysisError('오디오를 해석하지 못해 분석을 건너뜁니다')
+  } finally {
+    clearTimeout(timer)
   }
   if (decoded.duration > MAX_ANALYSIS_SEC) {
     throw new AnalysisError(TOO_LONG)
@@ -60,7 +70,10 @@ function analyzeInWorker(signal: Float32Array, onProgress: (ratio: number) => vo
     }
 
     arm()
-    worker.onerror = fail
+    worker.onerror = (e) => {
+      console.warn('분석 워커 오류', e) // 원인은 Web Inspector에서 본다
+      fail()
+    }
     worker.onmessage = (e) => {
       if (settled) return
       arm() // 메시지가 올 때마다 워치독을 다시 건다
@@ -73,6 +86,7 @@ function analyzeInWorker(signal: Float32Array, onProgress: (ratio: number) => vo
       } else if (m.type === 'done') {
         finish(() => resolve(m.result))
       } else if (m.type === 'error') {
+        console.warn('분석 워커 오류', m.message) // 원인은 Web Inspector에서 본다
         fail()
       }
     }
