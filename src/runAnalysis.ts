@@ -4,6 +4,7 @@ import { SAMPLE_RATE, toAnalysis, type AnalysisResult } from './analysis.ts'
 import type { MappAnalysisV1 } from './schema.ts'
 
 export const MAX_ANALYSIS_SEC = 15 * 60
+export const TOO_LONG = '분석은 15분 이하 곡만 할 수 있어요. 태그는 저장할 수 있어요'
 const WATCHDOG_MS = 60_000 // 워커에서 이만큼 메시지가 없으면 멈춘 것으로 본다
 
 /** 메시지는 화면에 그대로 보여 준다. */
@@ -26,7 +27,7 @@ async function decodeMono(bytes: Uint8Array): Promise<{ signal: Float32Array; du
     throw new AnalysisError('오디오를 해석하지 못해 분석을 건너뜁니다')
   }
   if (decoded.duration > MAX_ANALYSIS_SEC) {
-    throw new AnalysisError('분석은 15분 이하 곡만 할 수 있어요. 태그는 저장할 수 있어요')
+    throw new AnalysisError(TOO_LONG)
   }
   const channels = Array.from({ length: decoded.numberOfChannels }, (_, c) => decoded.getChannelData(c))
   const signal = new Float32Array(decoded.length)

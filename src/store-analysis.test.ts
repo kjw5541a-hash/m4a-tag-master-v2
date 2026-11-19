@@ -3,7 +3,7 @@
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { initialJob, setAnalysisRunner, useQueue, type Item } from './store.ts'
-import { AnalysisError, MAX_ANALYSIS_SEC } from './runAnalysis.ts'
+import { AnalysisError, MAX_ANALYSIS_SEC, TOO_LONG } from './runAnalysis.ts'
 import { parseAnalysis, type MappAnalysisV1 } from './schema.ts'
 import { readTags, writeTags } from './mp4.ts'
 import { buildOutput } from './save.ts'
@@ -109,6 +109,13 @@ test('실행기가 AnalysisError로 실패하면 failed와 그 문구, status는
   })
   await useQueue.getState().analyze(id)
   assert.deepEqual(find(id).analysisJob, { state: 'failed', message: '분석 중 메모리가 부족했어요' })
+
+  // 디코드 뒤에 15분 초과를 알게 되면 실패가 아니라 건너뜀
+  setAnalysisRunner(async () => {
+    throw new AnalysisError(TOO_LONG)
+  })
+  await useQueue.getState().analyze(id)
+  assert.deepEqual(find(id).analysisJob, { state: 'skipped', message: TOO_LONG })
 })
 
 test('분석 중에 remove해도 되살아나지 않고 다음 곡 분석은 끝까지 돈다', async (t) => {

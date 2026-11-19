@@ -5,7 +5,7 @@ import { parseSource, type ParsedSource } from './lookup/query.ts'
 import { searchItunes, type Candidate } from './lookup/itunes.ts'
 import { fetchBytes, LookupError } from './lookup/http.ts'
 import { findLyrics } from './lookup/lyrics.ts'
-import { AnalysisError, MAX_ANALYSIS_SEC, runAnalysis } from './runAnalysis.ts'
+import { AnalysisError, MAX_ANALYSIS_SEC, runAnalysis, TOO_LONG } from './runAnalysis.ts'
 import { applyLyrics, initialEdit, selectCandidate, type Edit, type Source } from './edit.ts'
 
 export type Status = 'reading' | 'searching' | 'review' | 'saved' | 'failed'
@@ -57,8 +57,6 @@ function begin(id: string): () => boolean {
   latest.set(id, n)
   return () => latest.get(id) === n
 }
-
-const TOO_LONG = '분석은 15분 이하 곡만 할 수 있어요. 태그는 저장할 수 있어요'
 
 // 파일에 분석이 이미 있으면 그대로 쓰고, 15분을 넘으면 건너뛴다.
 export function initialJob(edit: Edit, durationSec: number): { state: AnalysisState; message?: string } {
@@ -204,7 +202,8 @@ export const useQueue = create<Queue>()((set, get) => {
         } catch (e) {
           if (current()) {
             const message = e instanceof AnalysisError ? e.message : '분석 중 메모리가 부족했어요'
-            patch(id, { analysisJob: { state: 'failed', message } })
+            // 디코드 뒤에 15분 초과를 알게 된 경우는 실패가 아니라 건너뜀이다.
+            patch(id, { analysisJob: { state: message === TOO_LONG ? 'skipped' : 'failed', message } })
           }
         }
       })
