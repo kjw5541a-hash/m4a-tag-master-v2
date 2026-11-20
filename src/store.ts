@@ -13,12 +13,27 @@ export type Status = 'reading' | 'searching' | 'review' | 'saved' | 'failed'
 export const STATUS_LABEL: Record<Status, string> = {
   reading: '읽는 중',
   searching: '검색 중',
-  review: '확인 필요',
+  review: '저장 필요',
   saved: '저장됨',
   failed: '실패',
 }
 
 export type AnalysisState = 'waiting' | 'running' | 'done' | 'failed' | 'skipped'
+
+const REVIEW_LABEL: Record<AnalysisState, string> = {
+  waiting: '분석 대기',
+  running: '분석 중',
+  done: '분석 완료, 저장 필요',
+  failed: '분석 실패, 저장 필요',
+  skipped: '분석 건너뜀, 저장 필요',
+}
+
+/** 큐 카드와 편집 화면에 보이는 상태. 조회가 끝난 곡은 분석 상태를 함께 보여 준다. */
+export function statusLabel(item: Pick<Item, 'status' | 'analysisJob'>): string {
+  const job = item.analysisJob
+  if (item.status !== 'review' || !job) return STATUS_LABEL[item.status]
+  return job.state === 'running' ? `분석 중 ${Math.round((job.progress ?? 0) * 100)}%` : REVIEW_LABEL[job.state]
+}
 
 export interface Item {
   id: string

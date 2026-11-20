@@ -1,6 +1,6 @@
 // A. 큐: 파일 추가와 곡 카드 목록 (기획서 6.1).
 import { useEffect, useState, type ChangeEvent } from 'react'
-import { STATUS_LABEL, useQueue } from '../store.ts'
+import { statusLabel, useQueue } from '../store.ts'
 
 // 커버 바이트를 object URL로 보여 주고, 바뀌거나 사라지면 URL을 반납한다.
 export function CoverThumb({ bytes, className }: { bytes?: Uint8Array; className: string }) {
@@ -56,7 +56,7 @@ export default function QueueScreen({ onOpen }: { onOpen(id: string): void }) {
                 <span className="block truncate text-sm text-gray-500">
                   {[item.edit?.artist, item.edit?.album].filter(Boolean).join(' · ')}
                 </span>
-                <span className="block text-sm text-gray-700">{STATUS_LABEL[item.status]}</span>
+                <span className="block text-sm text-gray-700">{statusLabel(item)}</span>
                 {item.error && <span className="block text-sm text-red-600">{item.error}</span>}
               </span>
             </button>

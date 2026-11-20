@@ -18,6 +18,15 @@ const STAGE_RANGE: Record<string, [number, number]> = {
   chords: [0.95, 1],
 }
 
+/** 디코드 실패 원인을 사람이 읽을 짧은 문구로. */
+export function decodeFailureReason(e: unknown): string {
+  if (e instanceof Error && e.message === DECODE_TIMEOUT) return '60초 넘게 걸림'
+  const text = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
+  return text.slice(0, 80) || '원인 모름'
+}
+
+const DECODE_TIMEOUT = 'decode timeout'
+
 // 디코드해서 채널 평균 모노로 만든다. AudioBuffer는 이 함수가 끝나면 버려진다.
 async function decodeMono(bytes: Uint8Array): Promise<{ signal: Float32Array; durationSec: number }> {
   let decoded: AudioBuffer
@@ -25,14 +34,16 @@ async function decodeMono(bytes: Uint8Array): Promise<{ signal: Float32Array; du
   try {
     // decodeAudioData가 끝내 안 돌아오면 분석 큐와 저장이 영영 막히므로 워커 단계와 같은 시간 제한을 건다.
     const hang = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('decode timeout')), WATCHDOG_MS)
+      timer = setTimeout(() => reject(new Error(DECODE_TIMEOUT)), WATCHDOG_MS)
     })
     decoded = await Promise.race([
       new OfflineAudioContext(1, 1, SAMPLE_RATE).decodeAudioData(bytes.slice().buffer), // 복사본: 원본을 떼어 가지 않는다
       hang,
     ])
-  } catch {
-    throw new AnalysisError('오디오를 해석하지 못해 분석을 건너뜁니다')
+  } catch (e) {
+    // 원인을 화면에도 짧게 붙인다. 아이폰에서는 콘솔을 보기 어려워 실패 원인을 알 길이 없기 때문이다.
+    console.warn('디코드 실패', e)
+    throw new AnalysisError(`오디오를 해석하지 못해 분석을 건너뜁니다 (${decodeFailureReason(e)})`)
   } finally {
     clearTimeout(timer)
   }

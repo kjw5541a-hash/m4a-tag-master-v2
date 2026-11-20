@@ -103,8 +103,8 @@ async function run() {
     await page.goto(`${ORIGIN}/m4a-tag-master-v2/`)
     await page.locator('input[type=file]').setInputFiles(input)
 
-    // 한 곡이므로 B 화면으로 바로 간다. 조회가 끝나 '확인 필요'가 될 때까지 기다린다.
-    await page.getByText('확인 필요').waitFor()
+    // 한 곡이므로 B 화면으로 바로 간다. 조회가 끝나 후보 행이 나올 때까지 기다린다.
+    await page.getByRole('button', { name: /Running on the Sky/ }).waitFor()
     assert.equal(await page.getByLabel('제목').inputValue(), '하늘을 달리다')
     assert.equal(await page.getByLabel('가수').inputValue(), '이적')
     assert.equal(await page.getByLabel('앨범').inputValue(), '2적')
@@ -128,6 +128,8 @@ async function run() {
     // 분석 카드가 BPM을 보여 줄 때까지 기다린다(Chrome에서 진짜 분석이 돈다).
     await page.getByText('분석 (참고용)').waitFor()
     await page.getByText(/^BPM \d/).waitFor({ timeout: 60_000 })
+    // 분석이 끝나면 상태가 '분석 완료, 저장 필요'로 바뀐다.
+    await page.getByText('분석 완료, 저장 필요').waitFor()
 
     const save = async () => {
       const [download] = await Promise.all([

@@ -2,8 +2,8 @@
 // 파일은 테스트 전체에서 8개. 곡마다 iTunes 검색 1회라 분당 20회 제한에 걸리지 않는다.
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { initialJob, setAnalysisRunner, useQueue, type Item } from './store.ts'
-import { AnalysisError, MAX_ANALYSIS_SEC, TOO_LONG } from './runAnalysis.ts'
+import { initialJob, setAnalysisRunner, statusLabel, useQueue, type Item } from './store.ts'
+import { AnalysisError, decodeFailureReason, MAX_ANALYSIS_SEC, TOO_LONG } from './runAnalysis.ts'
 import { parseAnalysis, type MappAnalysisV1 } from './schema.ts'
 import { readTags, writeTags } from './mp4.ts'
 import { buildOutput } from './save.ts'
@@ -217,4 +217,25 @@ test('analyze를 연달아 부르면 마지막 결과만 남는다. 저장됨이
   assert.equal(find(id).edit?.analysis?.bpm, 3)
   assert.equal(find(id).analysisJob?.state, 'done')
   assert.equal(find(id).status, 'review')
+})
+
+test('statusLabel: 조회가 끝난 곡은 분석 상태와 함께 저장이 필요하다고 보여 준다', () => {
+  const label = (status: Item['status'], analysisJob?: Item['analysisJob']) => statusLabel({ status, analysisJob })
+  assert.equal(label('review', { state: 'done' }), '분석 완료, 저장 필요')
+  assert.equal(label('review', { state: 'failed', message: 'x' }), '분석 실패, 저장 필요')
+  assert.equal(label('review', { state: 'skipped', message: 'x' }), '분석 건너뜀, 저장 필요')
+  assert.equal(label('review', { state: 'waiting' }), '분석 대기')
+  assert.equal(label('review', { state: 'running', progress: 0.426 }), '분석 중 43%')
+  assert.equal(label('review'), '저장 필요')
+  // 조회 단계·저장·실패는 분석 상태와 관계없이 그대로
+  assert.equal(label('searching', { state: 'done' }), '검색 중')
+  assert.equal(label('saved', { state: 'done' }), '저장됨')
+  assert.equal(label('failed'), '실패')
+})
+
+test('decodeFailureReason: 디코드 실패 원인을 짧게 보여 준다', () => {
+  assert.equal(decodeFailureReason(new Error('decode timeout')), '60초 넘게 걸림')
+  assert.equal(decodeFailureReason(new DOMException('Decoding failed', 'EncodingError')), 'EncodingError: Decoding failed')
+  assert.equal(decodeFailureReason(null), 'null')
+  assert.equal(decodeFailureReason(new Error('x'.repeat(200))).length, 80)
 })

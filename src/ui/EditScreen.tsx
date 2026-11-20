@@ -4,7 +4,7 @@ import { cropSquareJpeg, isSquare } from '../cover.ts'
 import { formatDiff } from '../edit.ts'
 import { fetchBytes } from '../lookup/http.ts'
 import { buildOutput, shareOrDownload } from '../save.ts'
-import { STATUS_LABEL, useQueue } from '../store.ts'
+import { STATUS_LABEL, statusLabel, useQueue } from '../store.ts'
 import AnalysisCard from './AnalysisCard.tsx'
 import CandidateSheet from './CandidateSheet.tsx'
 import LyricsSheet from './LyricsSheet.tsx'
@@ -52,7 +52,7 @@ export default function EditScreen({ id, onBack }: { id: string; onBack(): void 
   const { edit: e, source: src, parsed } = item
   // 읽는 중이거나 검색 중이면 입력을 잠가, 늦게 온 조회 결과가 사용자가 친 값을 덮어쓰지 않게 한다.
   const locked = item.status === 'searching' || item.status === 'reading'
-  const status = locked ? `${STATUS_LABEL[item.status]}…` : STATUS_LABEL[item.status]
+  const status = locked ? `${STATUS_LABEL[item.status]}…` : statusLabel(item)
 
   const header = (
     <header className="flex items-center justify-between">
