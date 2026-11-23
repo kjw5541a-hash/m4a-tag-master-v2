@@ -258,3 +258,14 @@ test('saveAllTargets: 저장 필요 곡만 고르고, 검색·분석이 남으�
   assert.equal(rerun.busy, true)
   assert.deepEqual(ids(rerun), ['a', 'c', 'e'])
 })
+
+test('setSaveError는 검색 오류(error)를 건드리지 않고, 저장되면 지워진다', () => {
+  useQueue.setState({ items: [{ id: 'a', fileName: 'a.m4a', status: 'review', error: '검색 오류' } as Item] })
+  const { setSaveError, markSaved } = useQueue.getState()
+  setSaveError('a', '저장을 막았어요')
+  assert.equal(find('a').saveError, '저장을 막았어요')
+  assert.equal(find('a').error, '검색 오류')
+  markSaved('a', 'a.m4a')
+  assert.equal(find('a').saveError, undefined)
+  assert.equal(find('a').status, 'saved')
+})

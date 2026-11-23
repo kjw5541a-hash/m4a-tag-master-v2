@@ -191,7 +191,8 @@ async function run() {
       name: string
       bytes: number[]
     }[]
-    assert.equal(shared.length, 2)
+    // 두 곡이 같은 이름이 되므로 뒤의 것에 번호가 붙는다.
+    assert.deepEqual(shared.map((f) => f.name), ['이적 - 하늘을 달리다.m4a', '이적 - 하늘을 달리다 (2).m4a'])
     for (const f of shared) assert.ok(parseAnalysis(readTags(new Uint8Array(f.bytes)).analysis), `${f.name}에 분석이 있어야 해요`)
     await page.waitForFunction(() => document.body.innerText.split('저장됨').length - 1 === 3)
     assert.equal(await saveAll.count(), 0)

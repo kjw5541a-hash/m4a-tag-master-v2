@@ -57,6 +57,8 @@ export interface Item {
   parsed?: ParsedSource
   edit?: Edit
   savedAs?: string
+  // [모두 저장]에서 검증에 걸린 이유. 검색 오류(error)와 따로 둔다: error는 편집 화면의 [다시 시도](재검색)와 묶여 있다.
+  saveError?: string
   analysisJob?: { state: AnalysisState; progress?: number; message?: string }
 }
 
@@ -69,7 +71,7 @@ interface Queue {
   update(id: string, patch: Partial<Edit>): void
   remove(id: string): void
   markSaved(id: string, savedAs: string): void
-  setError(id: string, error?: string): void
+  setSaveError(id: string, message: string): void
 }
 
 const lookupMessage = (e: unknown) => (e instanceof LookupError ? e.message : '검색 중 오류가 났어요')
@@ -249,7 +251,7 @@ export const useQueue = create<Queue>()((set, get) => {
         }),
       })),
     remove: (id) => set((s) => ({ items: s.items.filter((i) => i.id !== id) })),
-    markSaved: (id, savedAs) => patch(id, { status: 'saved', savedAs }),
-    setError: (id, error) => patch(id, { error }),
+    markSaved: (id, savedAs) => patch(id, { status: 'saved', savedAs, saveError: undefined }),
+    setSaveError: (id, message) => patch(id, { saveError: message }),
   }
 })

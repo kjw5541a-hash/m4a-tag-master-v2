@@ -12,6 +12,44 @@ export function buildOutput(src: Source, e: Edit): File {
   return new File([out as Uint8Array<ArrayBuffer>], outputName(e, src.fileName), { type: 'audio/mp4' })
 }
 
+export interface Built {
+  id: string
+  edit: Edit
+  file: File
+}
+
+/**
+ * 여러 곡의 출력 파일을 만든다(동기: 탭 핸들러 안에서 바로 공유하려고). 검증에 실패한 곡은 빼고 이유를 돌려준다.
+ * prev에 같은 곡·같은 편집값(객체 그대로)으로 만든 파일이 있으면 다시 쓴다. NotAllowedError 뒤 다시 누를 때 곧바로 공유가 열리게 하려는 것.
+ * 한 번에 넘기는 파일 이름이 겹치면 뒤의 것에 ' (2)'처럼 번호를 붙인다.
+ */
+export function buildBatch(
+  items: { id: string; source: Source; edit: Edit }[],
+  prev: Built[] = [],
+): { built: Built[]; failed: { id: string; message: string }[] } {
+  const built: Built[] = []
+  const failed: { id: string; message: string }[] = []
+  const used = new Set<string>()
+  for (const { id, source, edit } of items) {
+    let file = prev.find((p) => p.id === id && p.edit === edit)?.file
+    if (!file) {
+      try {
+        file = buildOutput(source, edit)
+      } catch (err) {
+        failed.push({ id, message: err instanceof Error ? err.message : String(err) })
+        continue
+      }
+    }
+    const base = outputName(edit, source.fileName).replace(/\.m4a$/, '')
+    let name = `${base}.m4a`
+    for (let n = 2; used.has(name); n++) name = `${base} (${n}).m4a`
+    used.add(name)
+    if (file.name !== name) file = new File([file], name, { type: file.type })
+    built.push({ id, edit, file })
+  }
+  return { built, failed }
+}
+
 /** 공유 한 번에 넘기는 최대 파일 수. 10개 넘게 한 번에 공유하는 것은 실기기에서 확인하지 못했다(기획서 5.7). */
 export const SHARE_BATCH = 10
 

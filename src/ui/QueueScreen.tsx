@@ -1,6 +1,6 @@
 // A. 큐: 파일 추가와 곡 카드 목록 (기획서 6.1).
-import { useEffect, useState, type ChangeEvent } from 'react'
-import { buildOutput, saveErrorMessage, SHARE_BATCH, shareOrDownload } from '../save.ts'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { buildBatch, saveErrorMessage, SHARE_BATCH, shareOrDownload, type Built } from '../save.ts'
 import { saveAllTargets, statusLabel, useQueue } from '../store.ts'
 
 // 커버 바이트를 object URL로 보여 주고, 바뀌거나 사라지면 URL을 반납한다.
@@ -27,26 +27,26 @@ export default function QueueScreen({ onOpen }: { onOpen(id: string): void }) {
   const remove = useQueue((s) => s.remove)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState<string>()
+  // 공유가 끝나지 않은 묶음. 다시 누르면 바뀌지 않은 곡은 다시 만들지 않는다.
+  const lastBatch = useRef<Built[]>([])
   const { ready, busy } = saveAllTargets(items)
 
   // 클릭 핸들러 안에서 await 없이 파일을 만들고 바로 공유를 연다. 그래야 공유 권한(사용자 제스처)이 유지된다.
   function saveAll() {
-    const { markSaved, setError } = useQueue.getState()
-    const built: { id: string; file: File }[] = []
-    for (const item of ready.slice(0, SHARE_BATCH)) {
-      try {
-        built.push({ id: item.id, file: buildOutput(item.source!, item.edit!) })
-      } catch (err) {
-        // 검증에 실패한 곡만 빼고 나머지를 저장한다.
-        setError(item.id, `저장을 막았어요(원본은 안전해요): ${err instanceof Error ? err.message : String(err)}`)
-      }
-    }
+    const { markSaved, setSaveError } = useQueue.getState()
+    const batch = ready.slice(0, SHARE_BATCH).map((i) => ({ id: i.id, source: i.source!, edit: i.edit! }))
+    const { built, failed } = buildBatch(batch, lastBatch.current)
+    lastBatch.current = built
+    // 검증에 실패한 곡만 빼고 나머지를 저장한다.
+    for (const f of failed) setSaveError(f.id, `저장을 막았어요(원본은 안전해요): ${f.message}`)
     if (built.length === 0) return
     setNotice(undefined)
     setSaving(true)
     shareOrDownload(built.map((b) => b.file))
       .then((r) => {
-        if (r !== 'cancelled') for (const b of built) markSaved(b.id, b.file.name)
+        if (r === 'cancelled') return
+        for (const b of built) markSaved(b.id, b.file.name)
+        lastBatch.current = []
       })
       .catch((err: unknown) => setNotice(saveErrorMessage(err)))
       .finally(() => setSaving(false))
@@ -85,6 +85,7 @@ export default function QueueScreen({ onOpen }: { onOpen(id: string): void }) {
                 </span>
                 <span className="block text-sm text-gray-700">{statusLabel(item)}</span>
                 {item.error && <span className="block text-sm text-red-600">{item.error}</span>}
+                {item.saveError && <span className="block text-sm text-red-600">{item.saveError}</span>}
               </span>
             </button>
             <button aria-label="삭제" className="size-11 shrink-0 text-gray-500" onClick={() => remove(item.id)}>
