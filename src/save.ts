@@ -12,23 +12,34 @@ export function buildOutput(src: Source, e: Edit): File {
   return new File([out as Uint8Array<ArrayBuffer>], outputName(e, src.fileName), { type: 'audio/mp4' })
 }
 
-// 공유 시트를 우선하고, 안 되면 다운로드한다. NotAllowedError 등은 호출한 쪽이 처리하도록 그대로 던진다.
-export async function shareOrDownload(file: File): Promise<'shared' | 'downloaded' | 'cancelled'> {
-  if (navigator.canShare?.({ files: [file] })) {
+/** 공유 한 번에 넘기는 최대 파일 수. 10개 넘게 한 번에 공유하는 것은 실기기에서 확인하지 못했다(기획서 5.7). */
+export const SHARE_BATCH = 10
+
+// 공유 시트를 우선하고(파일 여러 개를 한 번에), 안 되면 파일마다 다운로드한다. NotAllowedError 등은 호출한 쪽이 처리하도록 그대로 던진다.
+export async function shareOrDownload(files: File[]): Promise<'shared' | 'downloaded' | 'cancelled'> {
+  if (navigator.canShare?.({ files })) {
     try {
-      await navigator.share({ files: [file] }) // title·text는 넣지 않는다.
+      await navigator.share({ files }) // title·text는 넣지 않는다.
       return 'shared'
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return 'cancelled'
       throw e
     }
   }
-  const url = URL.createObjectURL(file)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = file.name
-  a.click()
-  // 클릭 직후 바로 지우면 다운로드가 끊기는 브라우저가 있어 잠시 뒤에 지운다.
-  setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  for (const file of files) {
+    const url = URL.createObjectURL(file)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file.name
+    a.click()
+    // 클릭 직후 바로 지우면 다운로드가 끊기는 브라우저가 있어 잠시 뒤에 지운다.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
   return 'downloaded'
+}
+
+/** 공유·다운로드가 실패했을 때 화면에 보여 줄 문구. 만든 파일은 그대로 두므로 다시 누르면 된다. */
+export function saveErrorMessage(err: unknown): string {
+  const name = err instanceof DOMException ? err.name : ''
+  return name === 'NotAllowedError' ? '저장 버튼을 한 번 더 눌러 주세요' : `저장하지 못했어요 (${name || '알 수 없는 오류'})`
 }

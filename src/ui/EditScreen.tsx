@@ -3,7 +3,7 @@ import { useId, useRef, useState } from 'react'
 import { cropSquareJpeg, isSquare } from '../cover.ts'
 import { formatDiff } from '../edit.ts'
 import { fetchBytes } from '../lookup/http.ts'
-import { buildOutput, shareOrDownload } from '../save.ts'
+import { buildOutput, saveErrorMessage, shareOrDownload } from '../save.ts'
 import { STATUS_LABEL, statusLabel, useQueue } from '../store.ts'
 import AnalysisCard from './AnalysisCard.tsx'
 import CandidateSheet from './CandidateSheet.tsx'
@@ -97,15 +97,12 @@ export default function EditScreen({ id, onBack }: { id: string; onBack(): void 
     const saved = file
     setNotice(undefined)
     setSaving(true)
-    shareOrDownload(saved)
+    shareOrDownload([saved])
       .then((r) => {
         if (r !== 'cancelled') markSaved(id, saved.name)
       })
-      .catch((err: unknown) => {
-        const name = err instanceof DOMException ? err.name : ''
-        // 만든 파일은 그대로 두므로 다시 누르면 바로 공유가 열린다.
-        setNotice({ text: name === 'NotAllowedError' ? '저장 버튼을 한 번 더 눌러 주세요' : `저장하지 못했어요 (${name || '알 수 없는 오류'})` })
-      })
+      // 만든 파일은 그대로 두므로 다시 누르면 바로 공유가 열린다.
+      .catch((err: unknown) => setNotice({ text: saveErrorMessage(err) }))
       .finally(() => setSaving(false))
   }
 
