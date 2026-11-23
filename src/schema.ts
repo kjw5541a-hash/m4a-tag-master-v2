@@ -65,3 +65,25 @@ export function editAnalysis(
     edited: true,
   }
 }
+
+// 화면 표기(기획서 F10). 파일에는 # 표기로 저장하고, 보여 줄 때만 조성에 맞춰 ♭으로 바꾼다.
+// 관계 장조가 샵 조성(G·D·A·E·B)이면 # 그대로, 그 밖(플랫 조성과 C장조·A단조)은 ♭.
+const SHARP_MAJORS = new Set(['G', 'D', 'A', 'E', 'B'])
+const FLAT_NAME: Record<string, string> = { 'C#': 'D♭', 'D#': 'E♭', 'F#': 'G♭', 'G#': 'A♭', 'A#': 'B♭' }
+
+function useFlats(key: PitchClass, scale: 'major' | 'minor'): boolean {
+  const i = PITCH_CLASSES.indexOf(key)
+  const relativeMajor = PITCH_CLASSES[scale === 'minor' ? (i + 3) % 12 : i]
+  return !SHARP_MAJORS.has(relativeMajor)
+}
+
+/** 'A#m' → 'B♭m'처럼 조성에 맞춘 코드 이름. N과 샵 조성의 코드는 그대로. */
+export function spellChord(chord: string, key: PitchClass, scale: 'major' | 'minor'): string {
+  if (!useFlats(key, scale)) return chord
+  const minor = chord.endsWith('m')
+  const root = minor ? chord.slice(0, -1) : chord
+  return (FLAT_NAME[root] ?? root) + (minor ? 'm' : '')
+}
+
+/** 'G# major' → 'A♭ major'. 조성 이름은 그 조성 자신의 규칙으로 쓴다. */
+export const keyLabel = (key: PitchClass, scale: 'major' | 'minor') => `${spellChord(key, key, scale)} ${scale}`

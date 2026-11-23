@@ -5,7 +5,7 @@ import {
   ANALYZER, chordsFromChroma, musicalBpm, regroup, toAnalysis, topProgressions,
   type AnalysisResult, type BeatChroma,
 } from './analysis.ts'
-import { editAnalysis, parseAnalysis } from './schema.ts'
+import { editAnalysis, keyLabel, parseAnalysis, spellChord } from './schema.ts'
 
 const progression = (names: string) => names.split(' ').map((chord) => ({ chord }))
 
@@ -185,4 +185,28 @@ test('regroup: a.bpm 기준으로 chords·topProgressions를 바꾸고 나머지
   assert.deepEqual(r.topProgressions, topProgressions(r.chords))
   assert.equal(r.topProgressions[0]!.count >= 2, true)
   assert.deepEqual({ ...r, chords: a.chords, topProgressions: a.topProgressions }, a)
+})
+
+test('spellChord: 플랫 조성(과 C장조·A단조)에서는 ♭, 샵 조성에서는 # 그대로', () => {
+  // 180도(G# major = A♭ major): 모두 ♭
+  assert.deepEqual(['G#', 'Fm', 'C#', 'A#m', 'D#', 'N'].map((c) => spellChord(c, 'G#', 'major')), ['A♭', 'Fm', 'D♭', 'B♭m', 'E♭', 'N'])
+  // F minor(관계 장조 A♭)
+  assert.equal(spellChord('A#', 'F', 'minor'), 'B♭')
+  // E major(샵 4개)는 그대로
+  assert.deepEqual(['C#m', 'F#m', 'G#m', 'B'].map((c) => spellChord(c, 'E', 'major')), ['C#m', 'F#m', 'G#m', 'B'])
+  // E minor(관계 장조 G)도 샵
+  assert.equal(spellChord('F#m', 'E', 'minor'), 'F#m')
+  // C major·A minor에서 빌려 온 코드는 ♭
+  assert.equal(spellChord('A#', 'C', 'major'), 'B♭')
+  assert.equal(spellChord('G#', 'A', 'minor'), 'A♭')
+})
+
+test('keyLabel: 조성 이름도 같은 규칙', () => {
+  assert.equal(keyLabel('G#', 'major'), 'A♭ major')
+  assert.equal(keyLabel('C#', 'major'), 'D♭ major')
+  assert.equal(keyLabel('F#', 'major'), 'G♭ major')
+  assert.equal(keyLabel('D#', 'minor'), 'E♭ minor')
+  assert.equal(keyLabel('G#', 'minor'), 'G# minor')
+  assert.equal(keyLabel('F#', 'minor'), 'F# minor')
+  assert.equal(keyLabel('D', 'major'), 'D major')
 })

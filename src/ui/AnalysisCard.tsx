@@ -1,9 +1,10 @@
 // 분석 카드: 분석 상태, BPM·조성 수정, 반복 코드 진행 (기획서 6.2, 5.5).
-import { PITCH_CLASSES, type MappAnalysisV1 } from '../schema.ts'
+import { keyLabel, PITCH_CLASSES, spellChord, type MappAnalysisV1 } from '../schema.ts'
 import { useQueue, type Item } from '../store.ts'
 
 const button = 'min-h-11 min-w-11 rounded-lg border border-gray-300 px-3 text-sm disabled:opacity-50'
-const KEYS = PITCH_CLASSES.flatMap((k) => (['major', 'minor'] as const).map((scale) => `${k} ${scale}`))
+// 값은 파일과 같은 # 표기, 보이는 글자는 조성에 맞춘 표기(F10)
+const KEYS = PITCH_CLASSES.flatMap((k) => (['major', 'minor'] as const).map((scale) => ({ value: `${k} ${scale}`, label: keyLabel(k, scale) })))
 
 export default function AnalysisCard({ id, job, analysis }: { id: string; job?: Item['analysisJob']; analysis?: MappAnalysisV1 }) {
   if (!job) return null
@@ -63,7 +64,9 @@ export default function AnalysisCard({ id, job, analysis }: { id: string; job?: 
             }}
           >
             {KEYS.map((k) => (
-              <option key={k}>{k}</option>
+              <option key={k.value} value={k.value}>
+                {k.label}
+              </option>
             ))}
           </select>
         </label>
@@ -72,7 +75,7 @@ export default function AnalysisCard({ id, job, analysis }: { id: string; job?: 
           {analysis.topProgressions.length ? (
             <ul>
               {analysis.topProgressions.map((p) => (
-                <li key={p.chords.join('-')}>{`${p.chords.join('–')} (${p.count}회)`}</li>
+                <li key={p.chords.join('-')}>{`${p.chords.map((c) => spellChord(c, analysis.key, analysis.scale)).join('–')} (${p.count}회)`}</li>
               ))}
             </ul>
           ) : (
