@@ -104,18 +104,11 @@ export function inspect(b: Uint8Array): { duration: number } {
   const moovs = top.filter((x) => x.type === 'moov')
   if (!top.some((x) => x.type === 'ftyp') || !top.some((x) => x.type === 'mdat') || moovs.length !== 1) throw corrupt()
 
-  const unsupported = new Mp4Error('오디오 트랙이 하나인 AAC·ALAC m4a만 지원해요')
-  const sound = children(b, moovs[0])
-    .filter((c) => c.type === 'trak')
-    .filter((t) => {
-      const hdlr = path(b, t, 'mdia', 'hdlr')
-      return hdlr && fourcc(b, hdlr.body + 8) === 'soun'
-    })
-  if (sound.length !== 1) throw unsupported
-  const stsd = path(b, sound[0], 'mdia', 'minf', 'stbl', 'stsd')
-  if (!stsd || !['mp4a', 'alac'].includes(fourcc(b, stsd.body + 12))) throw unsupported
+  const sound = soundTrak(b, moovs[0])
+  const stsd = path(b, sound, 'mdia', 'minf', 'stbl', 'stsd')
+  if (!stsd || !['mp4a', 'alac'].includes(fourcc(b, stsd.body + 12))) throw unsupported()
 
-  const mdhd = path(b, sound[0], 'mdia', 'mdhd')
+  const mdhd = path(b, sound, 'mdia', 'mdhd')
   if (!mdhd) throw corrupt()
   const v = dv(b)
   const [timescale, duration] =
@@ -124,6 +117,117 @@ export function inspect(b: Uint8Array): { duration: number } {
       : [v.getUint32(mdhd.body + 12), v.getUint32(mdhd.body + 16)]
   if (!timescale) throw corrupt()
   return { duration: duration / timescale }
+}
+
+const unsupported = () => new Mp4Error('오디오 트랙이 하나인 AAC·ALAC m4a만 지원해요')
+
+/** 소리 트랙(hdlr = soun) 하나를 찾는다. 없거나 여럿이면 Mp4Error. */
+function soundTrak(b: Uint8Array, moov: Box): Box {
+  const sound = children(b, moov)
+    .filter((c) => c.type === 'trak')
+    .filter((t) => {
+      const hdlr = path(b, t, 'mdia', 'hdlr')
+      return hdlr && fourcc(b, hdlr.body + 8) === 'soun'
+    })
+  if (sound.length !== 1) throw unsupported()
+  return sound[0]
+}
+
+export interface AudioTrack {
+  /** WebCodecs 코덱 문자열(예: 'mp4a.40.2'). AAC가 아니면 원래 형식 이름(예: 'alac'). */
+  codec: string
+  sampleRate: number
+  channels: number
+  /** AAC의 AudioSpecificConfig. 읽지 못하면 없다. */
+  config?: Uint8Array
+  /** 프레임(샘플)마다 파일 안 위치와 크기 */
+  offsets: number[]
+  sizes: number[]
+}
+
+/** 오디오 트랙의 디코더 설정과 프레임 위치를 읽는다. 긴 곡을 WebCodecs로 조금씩 디코드하는 데 쓴다. */
+export function audioTrack(b: Uint8Array): AudioTrack {
+  const v = dv(b)
+  const stbl = path(b, soundTrak(b, moovOf(b)), 'mdia', 'minf', 'stbl')
+  const table = (type: string) => stbl && children(b, stbl).find((c) => c.type === type)
+  const stsd = table('stsd')
+  const stsz = table('stsz')
+  const stsc = table('stsc')
+  const stco = table('stco') ?? table('co64')
+  if (!stsd || !stsz || !stsc || !stco) throw corrupt()
+
+  // stsd 첫 항목: 크기·형식(8) + 예약·참조(8) + 버전·개정·벤더(8) + 채널(2) + 비트(2) + 압축·패킷(4) + 샘플레이트 16.16(4)
+  const entry = stsd.body + 8
+  const format = fourcc(b, entry + 4)
+  const version = v.getUint16(entry + 16)
+  const channels = v.getUint16(entry + 24)
+  const sampleRate = v.getUint32(entry + 32) >>> 16
+  let codec = format
+  let config: Uint8Array | undefined
+  if (format === 'mp4a' && version === 0) {
+    const esds = boxes(b, entry + 36, entry + v.getUint32(entry)).find((c) => c.type === 'esds')
+    config = esds && decoderConfig(b, esds.body + 4, esds.end)
+    if (config) {
+      const aot = config[0] >> 3
+      codec = `mp4a.40.${aot === 31 ? 32 + (((config[0] & 7) << 3) | (config[1] >> 5)) : aot}`
+    }
+  }
+
+  // 프레임 크기: 모두 같으면 하나만 적혀 있다
+  const fixed = v.getUint32(stsz.body + 4)
+  const count = v.getUint32(stsz.body + 8)
+  const sizes = Array.from({ length: count }, (_, i) => fixed || v.getUint32(stsz.body + 12 + 4 * i))
+  // 청크 시작 위치와, 청크마다 프레임 수(stsc: 첫 청크 번호부터 같은 수가 이어진다)로 프레임 위치를 푼다
+  const wide = stco.type === 'co64'
+  const chunks = v.getUint32(stco.body + 4)
+  const runs = Array.from({ length: v.getUint32(stsc.body + 4) }, (_, i) => ({
+    first: v.getUint32(stsc.body + 8 + 12 * i),
+    perChunk: v.getUint32(stsc.body + 12 + 12 * i),
+  }))
+  const offsets: number[] = []
+  for (let c = 0, r = 0; c < chunks && offsets.length < count; c++) {
+    while (r + 1 < runs.length && runs[r + 1].first <= c + 1) r++
+    let at = wide ? Number(v.getBigUint64(stco.body + 8 + 8 * c)) : v.getUint32(stco.body + 8 + 4 * c)
+    for (let k = 0; k < runs[r].perChunk && offsets.length < count; k++) {
+      offsets.push(at)
+      at += sizes[offsets.length - 1]
+    }
+  }
+  if (offsets.length !== count) throw corrupt()
+  return { codec, sampleRate, channels, config, offsets, sizes }
+}
+
+/** esds의 디스크립터를 따라가 DecoderSpecificInfo(태그 5, AAC의 AudioSpecificConfig)를 꺼낸다. */
+function decoderConfig(b: Uint8Array, from: number, to: number): Uint8Array | undefined {
+  let p = from
+  const length = () => {
+    let n = 0
+    for (let i = 0; i < 4; i++) {
+      const c = b[p++]
+      n = (n << 7) | (c & 0x7f)
+      if (!(c & 0x80)) break
+    }
+    return n
+  }
+  while (p < to) {
+    const tag = b[p++]
+    const n = length()
+    if (tag === 0x03) {
+      // ES_Descriptor: ES_ID(2) + 플래그(1) + 플래그에 따른 선택 필드. 자식 디스크립터가 뒤에 이어진다
+      p += 2
+      const flags = b[p++]
+      if (flags & 0x80) p += 2
+      if (flags & 0x40) p += 1 + b[p]
+      if (flags & 0x20) p += 2
+    } else if (tag === 0x04) {
+      p += 13 // DecoderConfigDescriptor 고정부. 자식(태그 5)이 뒤에 이어진다
+    } else if (tag === 0x05) {
+      return b.slice(p, p + n)
+    } else {
+      p += n
+    }
+  }
+  return undefined
 }
 
 function ilstOf(b: Uint8Array): Box | undefined {

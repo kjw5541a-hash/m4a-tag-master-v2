@@ -1,6 +1,7 @@
 // 브라우저 분석 실행기: m4a 바이트 → 디코드 → 모노 → 곡마다 새 워커 → 워치독 → 스키마 v1.
 // 브라우저 전용 전역(OfflineAudioContext·Worker)은 함수 안에서만 쓴다. Node 테스트가 이 파일을 import해도 throw하지 않게 하려는 것.
 import { SAMPLE_RATE, toAnalysis, type AnalysisResult } from './analysis.ts'
+import { audioTrack } from './mp4.ts'
 import type { MappAnalysisV1 } from './schema.ts'
 
 export const MAX_ANALYSIS_SEC = 15 * 60
@@ -27,19 +28,25 @@ export function decodeFailureReason(e: unknown): string {
 
 const DECODE_TIMEOUT = 'decode timeout'
 
-// 디코드해서 채널 평균 모노로 만든다. AudioBuffer는 이 함수가 끝나면 버려진다.
-async function decodeMono(bytes: Uint8Array): Promise<{ signal: Float32Array; durationSec: number }> {
-  let decoded: AudioBuffer
+type Mono = { signal: Float32Array; durationSec: number }
+
+// 디코드해서 채널 평균 모노로 만든다.
+// WebCodecs를 먼저 쓰고, 쓸 수 없으면 decodeAudioData로 한다. 두 단계 합쳐 WATCHDOG_MS를 넘기면 실패로 본다.
+async function decodeMono(bytes: Uint8Array): Promise<Mono> {
   let timer: ReturnType<typeof setTimeout> | undefined
+  let mono: Mono
   try {
-    // decodeAudioData가 끝내 안 돌아오면 분석 큐와 저장이 영영 막히므로 워커 단계와 같은 시간 제한을 건다.
-    const hang = new Promise<never>((_, reject) => {
+    const deadline = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error(DECODE_TIMEOUT)), WATCHDOG_MS)
     })
-    decoded = await Promise.race([
-      new OfflineAudioContext(1, 1, SAMPLE_RATE).decodeAudioData(bytes.slice().buffer), // 복사본: 원본을 떼어 가지 않는다
-      hang,
+    const fast = await Promise.race([
+      decodeWithWebCodecs(bytes).catch((e) => {
+        console.warn('WebCodecs 디코드 실패, decodeAudioData로 다시 시도', e)
+        return undefined
+      }),
+      deadline,
     ])
+    mono = fast ?? (await Promise.race([decodeWithAudioContext(bytes), deadline]))
   } catch (e) {
     // 원인을 화면에도 짧게 붙인다. 아이폰에서는 콘솔을 보기 어려워 실패 원인을 알 길이 없기 때문이다.
     console.warn('디코드 실패', e)
@@ -47,9 +54,70 @@ async function decodeMono(bytes: Uint8Array): Promise<{ signal: Float32Array; du
   } finally {
     clearTimeout(timer)
   }
-  if (decoded.duration > MAX_ANALYSIS_SEC) {
-    throw new AnalysisError(TOO_LONG)
+  if (mono.durationSec > MAX_ANALYSIS_SEC) throw new AnalysisError(TOO_LONG)
+  return mono
+}
+
+/**
+ * AAC 프레임을 하나씩 WebCodecs로 디코드하며 바로 모노로 합친다. 쓸 수 없는 환경·형식이면 undefined.
+ * Safari의 decodeAudioData는 긴 곡에서 매우 느리다(Mac WebKit 실측: 3분 1.1초, 11분 48초, 15분 92초).
+ * 이 방식은 같은 파일이 11분 1.4초, 15분 2.1초였고, 스테레오 전체를 메모리에 올리지 않는다.
+ */
+async function decodeWithWebCodecs(bytes: Uint8Array): Promise<Mono | undefined> {
+  if (typeof AudioDecoder === 'undefined') return undefined
+  const track = audioTrack(bytes)
+  // 분석은 44.1kHz 전제라, 다른 샘플레이트는 다시 샘플링해 주는 decodeAudioData에 맡긴다.
+  if (!track.codec.startsWith('mp4a') || !track.config || track.sampleRate !== SAMPLE_RATE) return undefined
+  const config = { codec: track.codec, sampleRate: track.sampleRate, numberOfChannels: track.channels, description: track.config }
+  if (!(await AudioDecoder.isConfigSupported(config)).supported) return undefined
+
+  let signal = new Float32Array(track.sizes.length * 1024) // AAC-LC는 프레임당 1024샘플. 모자라면 늘린다
+  let written = 0
+  let failure: unknown
+  const decoder = new AudioDecoder({
+    output: (data) => {
+      try {
+        if (data.sampleRate !== SAMPLE_RATE) throw new Error(`출력 샘플레이트 ${data.sampleRate}`)
+        const n = data.numberOfFrames
+        if (written + n > signal.length) {
+          const grown = new Float32Array(Math.max(signal.length * 2, written + n))
+          grown.set(signal.subarray(0, written))
+          signal = grown
+        }
+        const plane = new Float32Array(n)
+        for (let c = 0; c < data.numberOfChannels; c++) {
+          data.copyTo(plane, { planeIndex: c, format: 'f32-planar' })
+          for (let i = 0; i < n; i++) signal[written + i] += plane[i] / data.numberOfChannels
+        }
+        written += n
+      } catch (e) {
+        failure ??= e
+      } finally {
+        data.close()
+      }
+    },
+    error: (e) => {
+      failure ??= e
+    },
+  })
+  try {
+    decoder.configure(config)
+    const frameUs = Math.round((1024 * 1e6) / track.sampleRate)
+    for (let i = 0; i < track.sizes.length && !failure; i++) {
+      const data = bytes.subarray(track.offsets[i], track.offsets[i] + track.sizes[i])
+      decoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: i * frameUs, data }))
+    }
+    await decoder.flush()
+  } finally {
+    if (decoder.state !== 'closed') decoder.close()
   }
+  if (failure) throw failure
+  return { signal: signal.subarray(0, written), durationSec: written / SAMPLE_RATE }
+}
+
+// 전체를 한 번에 디코드한다. AudioBuffer는 이 함수가 끝나면 버려진다.
+async function decodeWithAudioContext(bytes: Uint8Array): Promise<Mono> {
+  const decoded = await new OfflineAudioContext(1, 1, SAMPLE_RATE).decodeAudioData(bytes.slice().buffer) // 복사본: 원본을 떼어 가지 않는다
   const channels = Array.from({ length: decoded.numberOfChannels }, (_, c) => decoded.getChannelData(c))
   const signal = new Float32Array(decoded.length)
   for (let i = 0; i < signal.length; i++) {

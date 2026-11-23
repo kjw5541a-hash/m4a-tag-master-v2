@@ -4,11 +4,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseBuffer } from 'music-metadata'
-import { inspect, readTags, writeTags, verify, Mp4Error, type Tags } from './mp4.ts'
+import { audioTrack, inspect, readTags, writeTags, verify, Mp4Error, type Tags } from './mp4.ts'
 import { ffmpeg, makeImage, makeM4a } from './testing.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'mp4-test-'))
@@ -103,6 +104,49 @@ test('inspect: 길이를 구하고, 지원하지 않는 파일은 이유와 함�
   assert.match(reason(makeM4a('-movflags', 'frag_keyframe+empty_moov')), /분할 MP4/)
   assert.match(reason(new Uint8Array(1000).fill(7)), /손상/)
   assert.match(reason(makeM4a().subarray(0, 500)), /손상/)
+})
+
+/** ffprobe가 본 오디오 패킷(파일 안 위치, 크기). audioTrack의 기준(오라클)으로 쓴다. */
+function probePackets(bytes: Uint8Array): { offsets: number[]; sizes: number[] } {
+  const file = join(dir, `probe-${fileNo++}.m4a`)
+  writeFileSync(file, bytes)
+  // json으로 받아 필드 순서에 기대지 않는다
+  const r = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'a:0', '-show_entries', 'packet=pos,size', '-of', 'json', file])
+  const packets: { pos: string; size: string }[] = JSON.parse(r.stdout.toString()).packets
+  return { offsets: packets.map((x) => Number(x.pos)), sizes: packets.map((x) => Number(x.size)) }
+}
+
+test('audioTrack: AAC 프레임 위치·크기와 디코더 설정(AudioSpecificConfig)을 읽는다', () => {
+  // 사인 소스는 44.1kHz 모노: AOT 2, 주파수 색인 4, 채널 1 → 0x12 0x08 (ffmpeg는 SBR 신호 3바이트를 뒤에 덧붙인다)
+  const mono = makeM4a('-movflags', '+faststart')
+  const a = audioTrack(mono)
+  assert.equal(a.codec, 'mp4a.40.2')
+  assert.equal(a.sampleRate, 44100)
+  assert.equal(a.channels, 1)
+  assert.deepEqual(a.config?.subarray(0, 2), new Uint8Array([0x12, 0x08]))
+  assert.deepEqual({ offsets: a.offsets, sizes: a.sizes }, probePackets(mono))
+
+  // 48kHz 스테레오, moov가 뒤에 있는 파일: 주파수 색인 3, 채널 2 → 0x11 0x90
+  const stereo = makeM4a('-ac', '2', '-ar', '48000')
+  const b = audioTrack(stereo)
+  assert.equal(b.sampleRate, 48000)
+  assert.equal(b.channels, 2)
+  assert.deepEqual(b.config?.subarray(0, 2), new Uint8Array([0x11, 0x90]))
+  assert.deepEqual({ offsets: b.offsets, sizes: b.sizes }, probePackets(stereo))
+
+  // 영상 트랙과 섞이면 오디오 청크마다 프레임 수가 달라진다(stsc에 여러 줄). 소리 트랙만 골라 읽어야 한다
+  const ivFile = join(dir, `iv-${fileNo++}.m4a`)
+  ffmpeg('-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=3', '-f', 'lavfi', '-i', 'testsrc=duration=3:size=16x16:rate=7',
+    '-c:a', 'aac', '-c:v', 'mpeg4', '-movflags', '+faststart', ivFile)
+  const interleaved = new Uint8Array(readFileSync(ivFile))
+  const d = audioTrack(interleaved)
+  assert.ok(d.sizes.length > 100)
+  assert.deepEqual({ offsets: d.offsets, sizes: d.sizes }, probePackets(interleaved))
+
+  // co64(64비트 청크 오프셋)
+  const wide = toCo64(makeM4a('-movflags', '+faststart'))
+  const c = audioTrack(wide)
+  assert.deepEqual({ offsets: c.offsets, sizes: c.sizes }, probePackets(wide))
 })
 
 test('실제 m4a 파일 (REAL_M4A_DIR이 있을 때만)', { skip: !process.env.REAL_M4A_DIR }, async () => {
