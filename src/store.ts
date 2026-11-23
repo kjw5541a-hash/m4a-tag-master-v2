@@ -35,6 +35,18 @@ export function statusLabel(item: Pick<Item, 'status' | 'analysisJob'>): string 
   return job.state === 'running' ? `분석 중 ${Math.round((job.progress ?? 0) * 100)}%` : REVIEW_LABEL[job.state]
 }
 
+/** 큐의 [모두 저장] 대상(저장 필요 곡, 큐 순서)과, 검색·분석이 남아 아직 누르면 안 되는지. */
+export function saveAllTargets(items: Item[]): { ready: Item[]; busy: boolean } {
+  const busy = items.some(
+    (i) =>
+      i.status === 'reading' ||
+      i.status === 'searching' ||
+      i.analysisJob?.state === 'waiting' ||
+      i.analysisJob?.state === 'running',
+  )
+  return { ready: items.filter((i) => i.status === 'review'), busy }
+}
+
 export interface Item {
   id: string
   fileName: string
@@ -57,6 +69,7 @@ interface Queue {
   update(id: string, patch: Partial<Edit>): void
   remove(id: string): void
   markSaved(id: string, savedAs: string): void
+  setError(id: string, error?: string): void
 }
 
 const lookupMessage = (e: unknown) => (e instanceof LookupError ? e.message : '검색 중 오류가 났어요')
@@ -237,5 +250,6 @@ export const useQueue = create<Queue>()((set, get) => {
       })),
     remove: (id) => set((s) => ({ items: s.items.filter((i) => i.id !== id) })),
     markSaved: (id, savedAs) => patch(id, { status: 'saved', savedAs }),
+    setError: (id, error) => patch(id, { error }),
   }
 })

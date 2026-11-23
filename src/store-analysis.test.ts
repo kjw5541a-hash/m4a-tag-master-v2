@@ -2,7 +2,7 @@
 // 파일은 테스트 전체에서 8개. 곡마다 iTunes 검색 1회라 분당 20회 제한에 걸리지 않는다.
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { initialJob, setAnalysisRunner, statusLabel, useQueue, type Item } from './store.ts'
+import { initialJob, saveAllTargets, setAnalysisRunner, statusLabel, useQueue, type Item } from './store.ts'
 import { AnalysisError, decodeFailureReason, MAX_ANALYSIS_SEC, TOO_LONG } from './runAnalysis.ts'
 import { parseAnalysis, type MappAnalysisV1 } from './schema.ts'
 import { readTags, writeTags } from './mp4.ts'
@@ -238,4 +238,23 @@ test('decodeFailureReason: 디코드 실패 원인을 짧게 보여 준다', () 
   assert.equal(decodeFailureReason(new DOMException('Decoding failed', 'EncodingError')), 'EncodingError: Decoding failed')
   assert.equal(decodeFailureReason(null), 'null')
   assert.equal(decodeFailureReason(new Error('x'.repeat(200))).length, 80)
+})
+
+test('saveAllTargets: 저장 필요 곡만 고르고, 검색·분석이 남으면 busy', () => {
+  const it = (id: string, status: Item['status'], state?: NonNullable<Item['analysisJob']>['state']) =>
+    ({ id, fileName: 'x.m4a', status, analysisJob: state && { state } }) as Item
+  const base = [it('a', 'review', 'done'), it('b', 'saved', 'done'), it('c', 'review', 'failed'), it('d', 'failed'), it('e', 'review', 'skipped')]
+  const ids = (r: { ready: Item[] }) => r.ready.map((i) => i.id)
+
+  assert.deepEqual(ids(saveAllTargets(base)), ['a', 'c', 'e'])
+  assert.equal(saveAllTargets(base).busy, false)
+  assert.equal(saveAllTargets([...base, it('f', 'reading')]).busy, true)
+  assert.equal(saveAllTargets([...base, it('f', 'searching')]).busy, true)
+  const waiting = saveAllTargets([...base, it('f', 'review', 'waiting')])
+  assert.equal(waiting.busy, true)
+  assert.deepEqual(ids(waiting), ['a', 'c', 'e', 'f'])
+  // 저장한 곡을 다시 분석하는 중이면, 끝나고 '저장 필요'로 돌아오므로 기다린다.
+  const rerun = saveAllTargets([...base, it('f', 'saved', 'running')])
+  assert.equal(rerun.busy, true)
+  assert.deepEqual(ids(rerun), ['a', 'c', 'e'])
 })
