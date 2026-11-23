@@ -7,6 +7,8 @@ import { fetchBytes, LookupError } from './lookup/http.ts'
 import { findLyrics } from './lookup/lyrics.ts'
 import { AnalysisError, MAX_ANALYSIS_SEC, runAnalysis, TOO_LONG } from './runAnalysis.ts'
 import { applyLyrics, initialEdit, selectCandidate, type Edit, type Source } from './edit.ts'
+import { regroup, type BeatChroma } from './analysis.ts'
+import { editAnalysis, type MappAnalysisV1 } from './schema.ts'
 
 export type Status = 'reading' | 'searching' | 'review' | 'saved' | 'failed'
 
@@ -60,6 +62,8 @@ export interface Item {
   // [모두 저장]에서 검증에 걸린 이유. 검색 오류(error)와 따로 둔다: error는 편집 화면의 [다시 시도](재검색)와 묶여 있다.
   saveError?: string
   analysisJob?: { state: AnalysisState; progress?: number; message?: string }
+  // 이번 분석의 비트 사이 크로마(메모리 전용). BPM을 고치면 이것으로 코드를 다시 묶는다. 파일에서 읽은 분석에는 없다.
+  chroma?: BeatChroma
 }
 
 interface Queue {
@@ -69,6 +73,7 @@ interface Queue {
   choose(id: string, c: Candidate): Promise<void>
   analyze(id: string): Promise<void>
   update(id: string, patch: Partial<Edit>): void
+  editAnalysis(id: string, patch: Partial<Pick<MappAnalysisV1, 'bpm' | 'key' | 'scale'>>): void
   remove(id: string): void
   markSaved(id: string, savedAs: string): void
   setSaveError(id: string, message: string): void
@@ -217,7 +222,7 @@ export const useQueue = create<Queue>()((set, get) => {
         if (!current() || !item(id)) return
         patch(id, { analysisJob: { state: 'running', progress: 0 } })
         try {
-          const analysis = await runner(source.bytes, (progress) => {
+          const { analysis, chroma } = await runner(source.bytes, (progress) => {
             if (current()) patch(id, { analysisJob: { state: 'running', progress } })
           })
           if (!current()) return
@@ -225,7 +230,7 @@ export const useQueue = create<Queue>()((set, get) => {
           set((s) => ({
             items: s.items.map((i) =>
               i.id === id && i.edit
-                ? { ...i, edit: { ...i.edit, analysis }, analysisJob: { state: 'done' }, status: i.status === 'saved' ? 'review' : i.status }
+                ? { ...i, edit: { ...i.edit, analysis }, chroma, analysisJob: { state: 'done' }, status: i.status === 'saved' ? 'review' : i.status }
                 : i,
             ),
           }))
@@ -250,6 +255,16 @@ export const useQueue = create<Queue>()((set, get) => {
           return { ...i, edit: { ...i.edit, ...p }, status: dirty ? 'review' : i.status }
         }),
       })),
+    // 사람이 BPM·조성을 고친다. BPM이 바뀌고 이번 분석의 크로마가 있으면 그 BPM의 반 마디로 코드를 다시 묶는다.
+    editAnalysis(id, p) {
+      const it = item(id)
+      const a = it?.edit?.analysis
+      if (!a) return
+      let next = editAnalysis(a, p)
+      if (next === a) return // 범위 밖 bpm 등은 아무것도 바꾸지 않아, 저장된 곡을 '저장 필요'로 돌리지 않는다
+      if (next.bpm !== a.bpm && it.chroma) next = regroup(next, it.chroma)
+      get().update(id, { analysis: next })
+    },
     remove: (id) => set((s) => ({ items: s.items.filter((i) => i.id !== id) })),
     markSaved: (id, savedAs) => patch(id, { status: 'saved', savedAs, saveError: undefined }),
     setSaveError: (id, message) => patch(id, { saveError: message }),

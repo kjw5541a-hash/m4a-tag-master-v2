@@ -1,6 +1,6 @@
 // 브라우저 분석 실행기: m4a 바이트 → 디코드 → 모노 → 곡마다 새 워커 → 워치독 → 스키마 v1.
 // 브라우저 전용 전역(OfflineAudioContext·Worker)은 함수 안에서만 쓴다. Node 테스트가 이 파일을 import해도 throw하지 않게 하려는 것.
-import { SAMPLE_RATE, toAnalysis, type AnalysisResult } from './analysis.ts'
+import { SAMPLE_RATE, toAnalysis, type AnalysisResult, type BeatChroma } from './analysis.ts'
 import { audioTrack } from './mp4.ts'
 import type { MappAnalysisV1 } from './schema.ts'
 
@@ -172,8 +172,12 @@ function analyzeInWorker(signal: Float32Array, onProgress: (ratio: number) => vo
   })
 }
 
-export async function runAnalysis(bytes: Uint8Array, onProgress: (ratio: number) => void): Promise<MappAnalysisV1> {
+// chroma는 사용자가 BPM을 고칠 때 코드를 다시 묶는 데 쓴다(파일에는 넣지 않는다).
+export async function runAnalysis(
+  bytes: Uint8Array,
+  onProgress: (ratio: number) => void,
+): Promise<{ analysis: MappAnalysisV1; chroma?: BeatChroma }> {
   const { signal, durationSec } = await decodeMono(bytes)
   const result = await analyzeInWorker(signal, onProgress)
-  return toAnalysis(result, durationSec, new Date().toISOString())
+  return { analysis: toAnalysis(result, durationSec, new Date().toISOString()), chroma: result.beatChroma }
 }

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import { initialJob, saveAllTargets, setAnalysisRunner, statusLabel, useQueue, type Item } from './store.ts'
 import { AnalysisError, decodeFailureReason, MAX_ANALYSIS_SEC, TOO_LONG } from './runAnalysis.ts'
 import { parseAnalysis, type MappAnalysisV1 } from './schema.ts'
+import { chordsFromChroma, type BeatChroma } from './analysis.ts'
 import { readTags, writeTags } from './mp4.ts'
 import { buildOutput } from './save.ts'
 import { makeM4a, stubFetch } from './testing.ts'
@@ -35,6 +36,8 @@ const fake = (bpm = 100, extra: Partial<MappAnalysisV1> = {}): MappAnalysisV1 =>
   ...extra,
 })
 
+const ran = (...args: Parameters<typeof fake>) => ({ analysis: fake(...args) })
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 async function until(cond: () => boolean) {
   for (let i = 0; i < 400 && !cond(); i++) await sleep(5)
@@ -59,7 +62,7 @@ test('파일을 추가하면 분석이 돌고(running·진행률) 결과가 edit
   setAnalysisRunner(async (_bytes, onProgress) => {
     onProgress(0.5)
     await g.promise
-    return fake(123.4)
+    return ran(123.4)
   })
   const { ids, done } = add(m4a('분석곡1.m4a'))
   const id = ids[0]!
@@ -82,7 +85,7 @@ test('두 곡을 추가해도 분석은 한 번에 하나씩 돈다', async (t) 
     max = Math.max(max, ++active)
     await sleep(30)
     active--
-    return fake()
+    return ran()
   })
   const { ids, done } = add(m4a('동시곡1.m4a'), m4a('동시곡2.m4a'))
   await done
@@ -124,7 +127,7 @@ test('분석 중에 remove해도 되살아나지 않고 다음 곡 분석은 끝
   let calls = 0
   setAnalysisRunner(async () => {
     if (++calls === 1) await g.promise
-    return fake(77)
+    return ran(77)
   })
   const { ids, done } = add(m4a('삭제곡1.m4a'), m4a('삭제곡2.m4a'))
   await until(() => find(ids[0]!).analysisJob?.state === 'running')
@@ -143,7 +146,7 @@ test('파일에 v1 ANALYSIS가 이미 있으면 분석하지 않고 그 값을 �
   let calls = 0
   setAnalysisRunner(async () => {
     calls++
-    return fake()
+    return ran()
   })
   const { ids, done } = add(m4a('기존곡1.m4a', writeTags(makeM4a(), { analysis: JSON.stringify(saved) })))
   const id = ids[0]!
@@ -174,7 +177,7 @@ test('analyze: 컨테이너 길이가 15분을 넘으면 디코드 없이 skippe
   let calls = 0
   setAnalysisRunner(async () => {
     calls++
-    return fake()
+    return ran()
   })
   const long: Item = {
     id: 'long',
@@ -198,7 +201,7 @@ test('analyze를 연달아 부르면 마지막 결과만 남는다. 저장됨이
   setAnalysisRunner(async () => {
     const n = ++calls
     if (n === 1) await g.promise
-    return fake(n)
+    return ran(n)
   })
   const { ids, done } = add(m4a('연달아곡1.m4a'))
   const id = ids[0]!
@@ -268,4 +271,50 @@ test('setSaveError는 검색 오류(error)를 건드리지 않고, 저장되면 
   markSaved('a', 'a.m4a')
   assert.equal(find('a').saveError, undefined)
   assert.equal(find('a').status, 'saved')
+})
+
+// 0.5초 비트(검출 120 BPM), 앞 4초 C 뒤 4초 G, 2초 지점에 반 비트 F
+const CHROMA: BeatChroma = (() => {
+  const tri = (notes: number[]) => Array.from({ length: 12 }, (_, p) => (notes.includes(p) ? 1 : 0))
+  const bounds = Array.from({ length: 17 }, (_, i) => i * 0.5)
+  return { detectedBpm: 120, bounds, chroma: bounds.slice(0, -1).map((t) => (t === 2 ? tri([5, 9, 0]) : t < 4 ? tri([0, 4, 7]) : tri([7, 11, 2]))) }
+})()
+
+test('editAnalysis: 분석 크로마가 있으면 BPM을 바꿀 때 코드를 다시 묶는다', async (t) => {
+  stubEmpty(t)
+  setAnalysisRunner(async () => ({ analysis: fake(240, { chords: chordsFromChroma(CHROMA, 240) }), chroma: CHROMA }))
+  const { ids, done } = add(m4a('다시묶기.m4a'))
+  const id = ids[0]!
+  await done
+  assert.ok(find(id).edit?.analysis?.chords.some((c) => c.chord === 'F'))
+  useQueue.getState().editAnalysis(id, { bpm: 60 })
+  const a = find(id).edit!.analysis!
+  assert.equal(a.bpm, 60)
+  assert.equal(a.edited, true)
+  assert.deepEqual(a.chords, chordsFromChroma(CHROMA, 60))
+  // 조성만 바꾸면 코드는 그대로
+  useQueue.getState().editAnalysis(id, { key: 'D' })
+  assert.deepEqual(find(id).edit!.analysis!.chords, a.chords)
+})
+
+test('editAnalysis: 파일에서 읽은 분석(크로마 없음)은 BPM만 바뀐다', () => {
+  const chords = [{ start: 0, end: 3, chord: 'C' }]
+  useQueue.setState({ items: [{ id: 'f', fileName: 'f.m4a', status: 'review', edit: { analysis: fake(100, { chords }) } } as Item] })
+  useQueue.getState().editAnalysis('f', { bpm: 50 })
+  assert.equal(find('f').edit!.analysis!.bpm, 50)
+  assert.deepEqual(find('f').edit!.analysis!.chords, chords)
+})
+
+test('다시 분석하면 크로마와 BPM이 새 분석 값으로 바뀐다', async (t) => {
+  stubEmpty(t)
+  setAnalysisRunner(async () => ({ analysis: fake(120), chroma: CHROMA }))
+  const { ids, done } = add(m4a('재분석.m4a'))
+  const id = ids[0]!
+  await done
+  useQueue.getState().editAnalysis(id, { bpm: 60 })
+  const other: BeatChroma = { detectedBpm: 90, bounds: [0, 3], chroma: [Array.from({ length: 12 }, () => 0)] }
+  setAnalysisRunner(async () => ({ analysis: fake(90), chroma: other }))
+  await useQueue.getState().analyze(id)
+  assert.equal(find(id).edit!.analysis!.bpm, 90)
+  assert.equal(find(id).chroma, other)
 })

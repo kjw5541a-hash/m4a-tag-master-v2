@@ -1,5 +1,5 @@
 // 분석 카드: 분석 상태, BPM·조성 수정, 반복 코드 진행 (기획서 6.2, 5.5).
-import { editAnalysis, PITCH_CLASSES, type MappAnalysisV1 } from '../schema.ts'
+import { PITCH_CLASSES, type MappAnalysisV1 } from '../schema.ts'
 import { useQueue, type Item } from '../store.ts'
 
 const button = 'min-h-11 min-w-11 rounded-lg border border-gray-300 px-3 text-sm disabled:opacity-50'
@@ -7,7 +7,7 @@ const KEYS = PITCH_CLASSES.flatMap((k) => (['major', 'minor'] as const).map((sca
 
 export default function AnalysisCard({ id, job, analysis }: { id: string; job?: Item['analysisJob']; analysis?: MappAnalysisV1 }) {
   if (!job) return null
-  const { analyze, update } = useQueue.getState()
+  const { analyze, editAnalysis } = useQueue.getState()
   const rerun = () => {
     if (analysis?.edited && !confirm('수정한 값이 덮어써져요. 다시 분석할까요?')) return
     void analyze(id)
@@ -23,10 +23,8 @@ export default function AnalysisCard({ id, job, analysis }: { id: string; job?: 
   else if (job.state === 'running') body = <p>{`분석 중 ${Math.round((job.progress ?? 0) * 100)}%`}</p>
   else if (job.state === 'done' && analysis) {
     // 값이 바뀌면 사용자가 고친 것으로 쓴다. 분석이 도는 동안에는 이 컨트롤을 그리지 않아, 늦게 온 결과가 사용자 수정을 덮지 못한다.
-    const change = (patch: Parameters<typeof editAnalysis>[1]) => {
-      const next = editAnalysis(analysis, patch)
-      if (next !== analysis) update(id, { analysis: next }) // 범위 밖 bpm(×2가 1000을 넘는 등)은 아무것도 바뀌지 않으니 저장된 곡을 '다시 확인'으로 돌리지 않는다
-    }
+    // BPM이 바뀌면 코드도 그 BPM의 반 마디로 다시 묶인다(스토어 editAnalysis).
+    const change = (patch: Parameters<typeof editAnalysis>[1]) => editAnalysis(id, patch)
     // 입력 중에는 값을 쓰지 않고, 입력란을 벗어날 때 한 번만 반영한다. 잘못된 값이면 되돌린다.
     const commitBpm = (el: HTMLInputElement) => {
       const v = Math.round(el.valueAsNumber * 10) / 10
