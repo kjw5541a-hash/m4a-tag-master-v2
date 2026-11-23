@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { initialJob, saveAllTargets, setAnalysisRunner, statusLabel, useQueue, type Item } from './store.ts'
 import { AnalysisError, decodeFailureReason, MAX_ANALYSIS_SEC, TOO_LONG } from './runAnalysis.ts'
 import { parseAnalysis, type MappAnalysisV1 } from './schema.ts'
-import { chordsFromChroma, type BeatChroma } from './analysis.ts'
+import { ANALYZER, chordsFromChroma, type BeatChroma } from './analysis.ts'
 import { readTags, writeTags } from './mp4.ts'
 import { buildOutput } from './save.ts'
 import { makeM4a, stubFetch } from './testing.ts'
@@ -168,9 +168,18 @@ test('initialJob: 분석 있음 → done, 15분 초과 → skipped, 그 밖 → 
   })
   assert.deepEqual(initialJob(edit, 300), { state: 'waiting' })
   assert.deepEqual(initialJob(edit, MAX_ANALYSIS_SEC), { state: 'waiting' })
-  const withAnalysis = { analysis: fake() } as Parameters<typeof initialJob>[0]
+  const withAnalysis = { analysis: fake(67.5, { analyzer: ANALYZER }) } as Parameters<typeof initialJob>[0]
   assert.deepEqual(initialJob(withAnalysis, 1), { state: 'done' })
   assert.deepEqual(initialJob(withAnalysis, MAX_ANALYSIS_SEC + 100), { state: 'done' })
+})
+
+test('initialJob: 예전 분석기로 넣은 분석은 다시 분석하고, 사람이 고친 것은 그대로 둔다', () => {
+  const old = (extra: Partial<MappAnalysisV1>) =>
+    ({ analysis: fake(134.9, { analyzer: 'm4a-tag-master@2 essentia.js@0.1.3', ...extra }) }) as Parameters<typeof initialJob>[0]
+  assert.deepEqual(initialJob(old({}), 229), { state: 'waiting' })
+  assert.deepEqual(initialJob(old({ edited: true }), 229), { state: 'done' })
+  // 15분이 넘으면 다시 분석할 수 없으니 들어 있는 값을 그대로 쓴다.
+  assert.deepEqual(initialJob(old({}), MAX_ANALYSIS_SEC + 1), { state: 'done' })
 })
 
 test('analyze: 컨테이너 길이가 15분을 넘으면 디코드 없이 skipped', async () => {

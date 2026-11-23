@@ -7,7 +7,7 @@ import { fetchBytes, LookupError } from './lookup/http.ts'
 import { findLyrics } from './lookup/lyrics.ts'
 import { AnalysisError, MAX_ANALYSIS_SEC, runAnalysis, TOO_LONG } from './runAnalysis.ts'
 import { applyLyrics, initialEdit, selectCandidate, type Edit, type Source } from './edit.ts'
-import { regroup, type BeatChroma } from './analysis.ts'
+import { ANALYZER, regroup, type BeatChroma } from './analysis.ts'
 import { editAnalysis, type MappAnalysisV1 } from './schema.ts'
 
 export type Status = 'reading' | 'searching' | 'review' | 'saved' | 'failed'
@@ -93,10 +93,13 @@ function begin(id: string): () => boolean {
   return () => latest.get(id) === n
 }
 
-// 파일에 분석이 이미 있으면 그대로 쓰고, 15분을 넘으면 건너뛴다.
+// 파일에 지금 분석기로 넣은 분석이 있거나 사람이 고친 분석이면 그대로 쓴다.
+// 예전 분석기의 값(예: @2는 발라드 BPM이 두 배, 코드가 박마다)은 다시 분석한다. 15분을 넘으면 다시 분석할 수 없으니 있는 값을 쓴다.
 export function initialJob(edit: Edit, durationSec: number): { state: AnalysisState; message?: string } {
-  if (edit.analysis) return { state: 'done' }
-  return durationSec > MAX_ANALYSIS_SEC ? { state: 'skipped', message: TOO_LONG } : { state: 'waiting' }
+  const a = edit.analysis
+  if (a && (a.analyzer === ANALYZER || a.edited)) return { state: 'done' }
+  if (durationSec > MAX_ANALYSIS_SEC) return a ? { state: 'done' } : { state: 'skipped', message: TOO_LONG }
+  return { state: 'waiting' }
 }
 
 let runner: typeof runAnalysis = runAnalysis
