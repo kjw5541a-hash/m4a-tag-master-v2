@@ -14,66 +14,25 @@ export interface ChordSegment {
   chord: string // "A#m", "D#", 코드 없음은 "N"
 }
 
-// 비트와 비트 사이 구간 하나(후처리 전). strength는 ChordsDetectionBeats가 준 값.
-export interface BeatChord extends ChordSegment {
-  strength: number
-}
-
 export interface AnalysisResult {
-  bpm: number
+  bpm: number // musicalBpm을 거친 값(발라드 두 배 보정)
   bpmConfidence: number // 0~5.32
   ticks: number[] // 비트 위치(초)
   key: string
   scale: string
   keyStrength: number
-  chords: ChordSegment[] // finalizeChords를 거친 값: 0초부터 끝까지 빈틈없이, 같은 코드 연속은 병합
+  chords: ChordSegment[] // chordsFromChroma 결과: 0초부터 끝까지 빈틈없이, 같은 코드 연속은 병합
+  beatChroma: BeatChroma // BPM을 고치면 다시 묶는 데 쓴다
   frames: number
   times: { rhythm: number; key: number; hpcp: number; chords: number } // 단계별 ms
 }
 
 const FLAT_TO_SHARP: Record<string, string> = { Db: 'C#', Eb: 'D#', Gb: 'F#', Ab: 'G#', Bb: 'A#' }
 const toSharp = (root: string) => FLAT_TO_SHARP[root] ?? root
-const normalizeChord = (c: string) => (c.endsWith('m') ? toSharp(c.slice(0, -1)) + 'm' : toSharp(c))
 const round2 = (x: number) => Math.round(x * 100) / 100
 const round1 = (x: number) => Math.round(x * 10) / 10
 
-export const ANALYZER = 'm4a-tag-master@2 essentia.js@0.1.3'
-
-// 비트별 코드를 곡 전체의 코드 구간으로 다듬는다.
-// 1) 강도가 nThreshold 미만이면 "N"  2) 같은 코드 연속은 합침
-// 3) 앞뒤가 같은 코드인 1비트짜리 구간은 앞 코드로 흡수(더 바뀌지 않을 때까지)
-// 4) 시간은 소수 둘째 자리. 첫 start와 마지막 end는 입력 그대로, 구간 사이에는 빈틈이 없다.
-export function finalizeChords(beats: BeatChord[], nThreshold = 0.3): ChordSegment[] {
-  const runs: { start: number; end: number; chord: string; beats: number }[] = []
-  for (const b of beats) {
-    const chord = b.strength < nThreshold ? 'N' : b.chord
-    const last = runs.at(-1)
-    if (last && last.chord === chord) {
-      last.end = b.end
-      last.beats++
-    } else {
-      runs.push({ start: b.start, end: b.end, chord, beats: 1 })
-    }
-  }
-  for (let changed = true; changed; ) {
-    changed = false
-    for (let i = 1; i + 1 < runs.length; i++) {
-      // 이웃한 구간은 항상 코드가 다르므로, 앞뒤가 같기만 하면 가운데는 앞뒤와 다르다.
-      if (runs[i].beats === 1 && runs[i - 1].chord === runs[i + 1].chord) {
-        runs[i - 1].end = runs[i + 1].end
-        runs[i - 1].beats += 2
-        runs.splice(i, 2)
-        changed = true
-        i--
-      }
-    }
-  }
-  return runs.map((r, i) => ({
-    start: i === 0 ? r.start : round2(r.start),
-    end: i === runs.length - 1 ? r.end : round2(runs[i + 1].start),
-    chord: r.chord,
-  }))
-}
+export const ANALYZER = 'm4a-tag-master@3 essentia.js@0.1.3'
 
 // 기획서 7.3: N을 빼고 연속 중복을 합친 코드 순서에서 연속 4개 묶음을 모두 모아, 회전이 같은 것은 같은 루프로 센다.
 // 2회 이상 나온 루프를 횟수 내림차순(같으면 먼저 나온 순)으로 최대 3개. 보여 줄 chords는 곡에서 처음 나온 회전.
@@ -231,7 +190,7 @@ export function analyze(
   // 프레임 i의 중심이 i*HOP에 오도록(Essentia 기본 규칙) 한 개씩 잘라 넘긴다.
   const frameCount = Math.ceil(signal.length / HOP_SIZE)
   const frameBuf = new Float32Array(FRAME_SIZE)
-  const pcp = new essentia.module.VectorVectorFloat()
+  const frames: Float32Array[] = [] // 프레임마다 12음 크로마, 0=C
   for (let i = 0; i < frameCount; i++) {
     const start = i * HOP_SIZE - FRAME_SIZE / 2
     const from = Math.max(0, start)
@@ -245,7 +204,11 @@ export function analyze(
       peaks.frequencies, peaks.magnitudes,
       true, 500, 8, 3500, false, 20, true, 'unitMax', 440, SAMPLE_RATE, 12, 'cosine', 1,
     )
-    pcp.push_back(hpcp.hpcp)
+    // essentia HPCP는 0번이 A(440Hz 기준)라서 0번이 C가 되게 돌린다.
+    const a = essentia.vectorToArray(hpcp.hpcp) as Float32Array
+    const c = new Float32Array(12)
+    for (let h = 0; h < 12; h++) c[(h + 9) % 12] = a[h]
+    frames.push(c)
     for (const v of [frame, windowed.frame, spectrum.spectrum, peaks.frequencies, peaks.magnitudes, hpcp.hpcp]) {
       v.delete()
     }
@@ -253,38 +216,33 @@ export function analyze(
   }
   lap('hpcp')
 
-  // 비트와 비트 사이 구간마다 코드 하나
+  // 비트 사이 구간마다 프레임(중심 i·HOP) 평균 크로마를 내고, BPM의 반 마디마다 코드를 고른다.
   onProgress('chords', 0)
-  const detected = essentia.ChordsDetectionBeats(pcp, rhythm.ticks, 'interbeat_median', HOP_SIZE, SAMPLE_RATE)
-  const names: string[] = []
-  for (let i = 0; i < detected.chords.size(); i++) names.push(detected.chords.get(i))
-  const strengths = Array.from(essentia.vectorToArray(detected.strength) as Float32Array)
-  for (const v of [detected.chords, detected.strength, pcp, rhythm.ticks]) v.delete()
-
-  // 경계: 0, 비트들, 곡 끝. 첫 비트 전과 코드가 없는 구간은 "N".
-  const bounds = [0, ...ticks, duration].map(round2)
-  const beats: BeatChord[] = []
-  for (let i = 0; i + 1 < bounds.length; i++) {
-    const [start, end] = [bounds[i], bounds[i + 1]]
-    if (end <= start) continue
-    const beat = i - 1 // bounds[i] = ticks[i-1]
-    beats.push(
-      beat >= 0 && beat < names.length
-        ? { start, end, chord: normalizeChord(names[beat]), strength: strengths[beat] }
-        : { start, end, chord: 'N', strength: 0 },
-    )
+  const bounds = [0, ...ticks.filter((t) => t > 0 && t < duration), duration].filter((t, i, a) => i === 0 || t > a[i - 1])
+  const chroma = bounds.slice(0, -1).map(() => Array.from({ length: 12 }, () => 0))
+  const counts = chroma.map(() => 0)
+  for (let i = 0, b = 0; i < frames.length; i++) {
+    const t = (i * HOP_SIZE) / SAMPLE_RATE
+    while (b + 1 < chroma.length && t >= bounds[b + 1]) b++
+    for (let p = 0; p < 12; p++) chroma[b][p] += frames[i][p]
+    counts[b]++
   }
-  const chords = finalizeChords(beats)
+  chroma.forEach((v, b) => counts[b] && v.forEach((x, p) => (v[p] = x / counts[b])))
+  rhythm.ticks.delete()
+  const beatChroma: BeatChroma = { detectedBpm: rhythm.bpm, bounds, chroma }
+  const bpm = musicalBpm(rhythm.bpm)
+  const chords = chordsFromChroma(beatChroma, bpm)
   lap('chords')
 
   return {
-    bpm: rhythm.bpm,
+    bpm,
     bpmConfidence: rhythm.confidence,
     ticks,
     key: toSharp(key.key),
     scale: key.scale,
     keyStrength: key.strength,
     chords,
+    beatChroma,
     frames: frameCount,
     times,
   }

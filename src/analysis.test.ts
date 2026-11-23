@@ -2,43 +2,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ANALYZER, chordsFromChroma, finalizeChords, musicalBpm, regroup, toAnalysis, topProgressions,
-  type AnalysisResult, type BeatChord, type BeatChroma,
+  ANALYZER, chordsFromChroma, musicalBpm, regroup, toAnalysis, topProgressions,
+  type AnalysisResult, type BeatChroma,
 } from './analysis.ts'
 import { editAnalysis, parseAnalysis } from './schema.ts'
 
-// 1초짜리 비트를 이어 붙인다: [코드, 강도]
-const beatsOf = (xs: [string, number][]): BeatChord[] =>
-  xs.map(([chord, strength], i) => ({ start: i, end: i + 1, chord, strength }))
 const progression = (names: string) => names.split(' ').map((chord) => ({ chord }))
 
 const fake = (chords: AnalysisResult['chords']): AnalysisResult => ({
   bpm: 117.66, bpmConfidence: 2.178, ticks: [], key: 'F', scale: 'minor', keyStrength: 0.9412,
-  chords, frames: 0, times: { rhythm: 0, key: 0, hpcp: 0, chords: 0 },
-})
-
-test('finalizeChords: 약한 구간은 N, 같은 코드는 합치고, 앞뒤가 같은 1비트는 흡수한다', () => {
-  const beats = beatsOf([['N', 0], ['C', 0.9], ['C', 0.8], ['G', 0.9], ['C', 0.9], ['C', 0.2], ['Am', 0.7]])
-  assert.deepEqual(finalizeChords(beats), [
-    { start: 0, end: 1, chord: 'N' },
-    { start: 1, end: 5, chord: 'C' },
-    { start: 5, end: 6, chord: 'N' },
-    { start: 6, end: 7, chord: 'Am' },
-  ])
-})
-
-test('finalizeChords: 시간은 소수 둘째 자리, 구간 사이에 빈틈이 없다', () => {
-  const beats: BeatChord[] = [
-    { start: 0, end: 1.234567, chord: 'C', strength: 0.9 },
-    { start: 1.234567, end: 2.345678, chord: 'G', strength: 0.9 },
-    { start: 2.345678, end: 3.456789, chord: 'Am', strength: 0.9 },
-  ]
-  const chords = finalizeChords(beats)
-  assert.equal(chords[0].end, 1.23)
-  assert.equal(chords[1].end, 2.35)
-  assert.equal(chords[0].start, 0)
-  assert.equal(chords.at(-1)!.end, 3.456789) // 마지막 end는 입력 그대로
-  for (let i = 1; i < chords.length; i++) assert.equal(chords[i].start, chords[i - 1].end)
+  chords, beatChroma: { detectedBpm: 0, bounds: [0], chroma: [] }, frames: 0, times: { rhythm: 0, key: 0, hpcp: 0, chords: 0 },
 })
 
 test('topProgressions: N을 빼고 겹쳐 센 묶음이 모두 같은 루프면 하나로 센다', () => {
@@ -72,7 +45,7 @@ test('toAnalysis: 반올림, 상수, edited false', () => {
   const a = toAnalysis(fake(chords), 297.1739, '2026-11-19T00:00:00.000Z')
   assert.equal(a.version, 1)
   assert.equal(a.analyzer, ANALYZER)
-  assert.equal(a.analyzer, 'm4a-tag-master@2 essentia.js@0.1.3')
+  assert.equal(a.analyzer, 'm4a-tag-master@3 essentia.js@0.1.3')
   assert.equal(a.analyzedAt, '2026-11-19T00:00:00.000Z')
   assert.equal(a.duration, 297.17)
   assert.equal(a.bpm, 117.7)
