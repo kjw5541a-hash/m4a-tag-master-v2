@@ -57,17 +57,21 @@ async function waitForServer() {
 
 async function run() {
   const dir = mkdtempSync(join(tmpdir(), 'm4a-e2e-'))
-  const input = join(dir, FILE_NAME)
   // 1초마다 비프음이 나는 12초 픽스처: 분석이 BPM·코드를 낼 수 있게 한다.
-  ffmpeg(
-    '-f', 'lavfi', '-i', 'sine=frequency=440:beep_factor=4:duration=12',
-    '-c:a', 'aac',
-    '-metadata', 'title=Lee Juck(이적) _ running on the sky(하늘을 달리다)',
-    '-metadata', 'artist=1theK (원더케이)',
-    '-metadata', 'album=1theK (원더케이)',
-    '-movflags', '+faststart',
-    input,
-  )
+  const fixture = (name: string) => {
+    const path = join(dir, name)
+    ffmpeg(
+      '-f', 'lavfi', '-i', 'sine=frequency=440:beep_factor=4:duration=12',
+      '-c:a', 'aac',
+      '-metadata', 'title=Lee Juck(이적) _ running on the sky(하늘을 달리다)',
+      '-metadata', 'artist=1theK (원더케이)',
+      '-metadata', 'album=1theK (원더케이)',
+      '-movflags', '+faststart',
+      path,
+    )
+    return path
+  }
+  const input = fixture(FILE_NAME)
 
   const browser = await chromium.launch({ channel: 'chrome', headless: true })
   try {
@@ -163,6 +167,34 @@ async function run() {
 
     await page.getByRole('button', { name: /큐/ }).click()
     await page.getByText('저장됨').waitFor()
+
+    // [모두 저장]: 두 곡을 더 넣고 큐에서 한 번에 저장한다. 이번에는 공유 시트 경로를 쓴다(아이폰과 같은 경로).
+    await page.evaluate(() => {
+      const nav = navigator as unknown as Record<string, unknown>
+      nav.canShare = () => true
+      nav.share = async ({ files }: { files: File[] }) => {
+        ;(window as unknown as Record<string, unknown>).__shared = await Promise.all(
+          files.map(async (f) => ({ name: f.name, bytes: [...new Uint8Array(await f.arrayBuffer())] })),
+        )
+      }
+    })
+    await page.locator('input[type=file]').setInputFiles([fixture('a.m4a'), fixture('b.m4a')])
+    const saveAll = page.getByRole('button', { name: '모두 저장 (2곡)' })
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('button')].some((b) => b.textContent === '모두 저장 (2곡)' && !b.disabled),
+      undefined,
+      { timeout: 60_000 },
+    )
+    await saveAll.click()
+    await page.waitForFunction(() => '__shared' in window)
+    const shared = (await page.evaluate(() => (window as unknown as Record<string, unknown>).__shared)) as {
+      name: string
+      bytes: number[]
+    }[]
+    assert.equal(shared.length, 2)
+    for (const f of shared) assert.ok(parseAnalysis(readTags(new Uint8Array(f.bytes)).analysis), `${f.name}에 분석이 있어야 해요`)
+    await page.waitForFunction(() => document.body.innerText.split('저장됨').length - 1 === 3)
+    assert.equal(await saveAll.count(), 0)
 
     assert.deepEqual(errors, [])
     assert.deepEqual(badResponses, [])

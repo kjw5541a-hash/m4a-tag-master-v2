@@ -1,6 +1,7 @@
 // A. 큐: 파일 추가와 곡 카드 목록 (기획서 6.1).
 import { useEffect, useState, type ChangeEvent } from 'react'
-import { statusLabel, useQueue } from '../store.ts'
+import { buildOutput, saveErrorMessage, SHARE_BATCH, shareOrDownload } from '../save.ts'
+import { saveAllTargets, statusLabel, useQueue } from '../store.ts'
 
 // 커버 바이트를 object URL로 보여 주고, 바뀌거나 사라지면 URL을 반납한다.
 export function CoverThumb({ bytes, className }: { bytes?: Uint8Array; className: string }) {
@@ -24,6 +25,32 @@ export default function QueueScreen({ onOpen }: { onOpen(id: string): void }) {
   const items = useQueue((s) => s.items)
   const addFiles = useQueue((s) => s.addFiles)
   const remove = useQueue((s) => s.remove)
+  const [saving, setSaving] = useState(false)
+  const [notice, setNotice] = useState<string>()
+  const { ready, busy } = saveAllTargets(items)
+
+  // 클릭 핸들러 안에서 await 없이 파일을 만들고 바로 공유를 연다. 그래야 공유 권한(사용자 제스처)이 유지된다.
+  function saveAll() {
+    const { markSaved, setError } = useQueue.getState()
+    const built: { id: string; file: File }[] = []
+    for (const item of ready.slice(0, SHARE_BATCH)) {
+      try {
+        built.push({ id: item.id, file: buildOutput(item.source!, item.edit!) })
+      } catch (err) {
+        // 검증에 실패한 곡만 빼고 나머지를 저장한다.
+        setError(item.id, `저장을 막았어요(원본은 안전해요): ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+    if (built.length === 0) return
+    setNotice(undefined)
+    setSaving(true)
+    shareOrDownload(built.map((b) => b.file))
+      .then((r) => {
+        if (r !== 'cancelled') for (const b of built) markSaved(b.id, b.file.name)
+      })
+      .catch((err: unknown) => setNotice(saveErrorMessage(err)))
+      .finally(() => setSaving(false))
+  }
 
   function add(e: ChangeEvent<HTMLInputElement>) {
     // 값을 비우면 FileList도 비므로 먼저 복사한다. 비워 두어야 같은 파일을 다시 고를 수 있다.
@@ -66,6 +93,19 @@ export default function QueueScreen({ onOpen }: { onOpen(id: string): void }) {
           </li>
         ))}
       </ul>
+      {(ready.length > 0 || busy) && (
+        <div className="space-y-1">
+          <button
+            className="min-h-12 w-full rounded-xl bg-blue-600 font-medium text-white disabled:opacity-50"
+            disabled={busy || saving || ready.length === 0}
+            onClick={saveAll}
+          >
+            {ready.length > SHARE_BATCH ? `${SHARE_BATCH}곡 저장 (남은 ${ready.length}곡)` : `모두 저장 (${ready.length}곡)`}
+          </button>
+          {busy && <p className="text-center text-sm text-gray-500">분석이 끝나면 저장할 수 있어요</p>}
+          {notice && <p className="text-center text-sm text-red-600">{notice}</p>}
+        </div>
+      )}
       <small className="block text-gray-500">빌드 {__BUILD_ID__}</small>
     </main>
   )
