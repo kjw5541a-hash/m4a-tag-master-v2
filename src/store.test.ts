@@ -436,3 +436,16 @@ test('저장 기록을 못 써도 저장은 된다', (t) => {
   assert.equal(find('b').status, 'saved')
   assert.equal(find('b').savedAs, 'B.m4a')
 })
+
+test('저장 기록 값이 망가져 있어도 곡을 넣고 저장할 수 있다', async (t) => {
+  stubAll(t)
+  for (const broken of ['null', '[1]']) {
+    storage.set('saved-files-v1', broken)
+    const id = await add(longM4a(`Long Band - Long Broken ${broken}.m4a`))
+    assert.equal(find(id).status, 'review')
+    useQueue.getState().markSaved(id, { name: 'Long Broken Out.m4a', size: 1 })
+    assert.equal(find(id).status, 'saved')
+    // 망가진 값은 새 기록으로 바뀐다.
+    assert.match(storage.get('saved-files-v1')!, /"1:Long Broken Out\.m4a"/)
+  }
+})

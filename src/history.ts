@@ -8,7 +8,9 @@ export const fileKey = (name: string, size: number) => `${size}:${name}`
 
 function read(): Record<string, string> {
   try {
-    return JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, string>
+    // 객체가 아니면(null·배열 등 망가진 값) 빈 기록으로 보고, 다음 저장 때 새로 쓴다.
+    const v: unknown = JSON.parse(localStorage.getItem(KEY) ?? '{}')
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, string>) : {}
   } catch {
     return {}
   }
