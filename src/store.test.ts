@@ -1,6 +1,6 @@
 // 큐 스토어 테스트 (기획서 3장 S1, 5.1, 9장). 실제 네트워크는 쓰지 않고 fetch를 stub한다.
 // 조회 결과가 URL별로 세션 캐시되므로 테스트마다 제목·검색어를 다르게 한다.
-// iTunes 호출 제한(분당 20회)은 이 파일 안에서 공유된다. 지금 18회라, 조회를 더하면 제한에 걸려 한참 기다린다.
+// iTunes 호출 제한(분당 20회)은 이 파일 안에서 공유된다. 지금 19회라, 조회를 더하면 제한에 걸려 한참 기다린다.
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { setAnalysisRunner, useQueue } from './store.ts'
@@ -52,14 +52,16 @@ const LRCLIB_HIT = {
 interface Stub {
   itunes?: (term: string) => unknown | Promise<unknown>
   artwork?: (url: URL) => Response | Promise<Response>
+  picsum?: () => Response | Promise<Response>
   search?: unknown[]
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // iTunes·아트워크·LRCLIB를 한꺼번에 흉내 낸다. LRCLIB get은 항상 404.
-function stubAll(t: TestContext, { itunes = () => ITUNES, artwork = () => new Response(PNG), search = [] }: Stub = {}) {
+function stubAll(t: TestContext, { itunes = () => ITUNES, artwork = () => new Response(PNG), picsum = () => new Response(PNG), search = [] }: Stub = {}) {
   return stubFetch(t, async (url) => {
+    if (url.hostname === 'picsum.photos') return picsum()
     if (url.hostname === 'itunes.apple.com') return json(await itunes(url.searchParams.get('term')!))
     if (url.hostname === 'is1-ssl.mzstatic.com') return artwork(url)
     if (url.pathname === '/api/get') return new Response('', { status: 404 })
@@ -68,6 +70,11 @@ function stubAll(t: TestContext, { itunes = () => ITUNES, artwork = () => new Re
 }
 
 const m4a = (name: string, ...args: string[]) => new File([makeM4a(...args) as Uint8Array<ArrayBuffer>], name)
+// 15분 1초짜리 곡(뒤는 무음). 만드는 데 몇 초 걸려 한 번만 만든다.
+let longBytes: Uint8Array | undefined
+const longM4a = (name: string) =>
+  new File([(longBytes ??= makeM4a('-af', 'apad', '-t', '901', '-ac', '1', '-b:a', '16k')) as Uint8Array<ArrayBuffer>], name)
+const OTHER = makeImage(16, 16, 'png') as Uint8Array<ArrayBuffer>
 
 const find = (id: string) => useQueue.getState().items.find((i) => i.id === id)!
 
@@ -306,4 +313,49 @@ test('200MB를 넘는 파일은 읽지 않고 실패 처리한다', async () => 
   assert.equal(find(ids[0]!).status, 'failed')
   assert.match(find(ids[0]!).error!, /200MB/)
   assert.equal(read, false)
+})
+
+test('긴 곡: 검색 없이 무작위 커버를 받고 바로 저장 필요', async (t) => {
+  const urls = stubAll(t)
+  const id = await add(longM4a('Long Band - Long Mix.m4a'))
+  const item = find(id)
+  assert.equal(item.status, 'review')
+  assert.equal(item.analysisJob?.state, 'skipped')
+  assert.deepEqual(item.edit!.cover, PNG)
+  // 곡 정보를 싣지 않은 무작위 사진 요청 하나뿐이다.
+  assert.equal(urls.length, 1)
+  assert.match(urls[0]!, /^https:\/\/picsum\.photos\/1000\?random=/)
+})
+
+test('긴 곡: 사진을 못 받아도 저장 필요', async (t) => {
+  stubAll(t, { picsum: () => new Response('', { status: 500 }) })
+  const id = await add(longM4a('Long Band - Long Fail.m4a'))
+  const item = find(id)
+  assert.equal(item.status, 'review')
+  assert.equal(item.error, undefined)
+  assert.equal(item.edit!.cover, undefined)
+})
+
+test('긴 곡: 받는 사이 검색하면 사진은 버린다', async (t) => {
+  stubAll(t, { picsum: async () => (await sleep(300), new Response(OTHER)) })
+  useQueue.setState({ items: [] })
+  const { ids, done } = useQueue.getState().addFiles([longM4a('Long Band - Long Race.m4a')])
+  const id = ids[0]!
+  while (find(id).status === 'reading') await sleep(10)
+  await useQueue.getState().lookup(id, 'Long Race Search')
+  await done
+  assert.equal(find(id).status, 'review')
+  assert.deepEqual(find(id).edit!.cover, PNG)
+})
+
+test('shuffleCover: 누를 때마다 다른 주소로 새 사진을 받는다', async (t) => {
+  const images = [PNG, OTHER]
+  let n = 0
+  const urls = stubAll(t, { picsum: () => new Response(images[n++ % 2]) })
+  const id = await add(longM4a('Long Band - Long Shuffle.m4a'))
+  assert.deepEqual(find(id).edit!.cover, PNG)
+  await useQueue.getState().shuffleCover(id)
+  assert.equal(find(id).status, 'review')
+  assert.deepEqual(find(id).edit!.cover, OTHER)
+  assert.equal(new Set(urls).size, 2)
 })

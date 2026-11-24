@@ -71,6 +71,7 @@ interface Queue {
   addFiles(files: File[]): { ids: string[]; done: Promise<void> }
   lookup(id: string, query?: string): Promise<void>
   choose(id: string, c: Candidate): Promise<void>
+  shuffleCover(id: string): Promise<void>
   analyze(id: string): Promise<void>
   update(id: string, patch: Partial<Edit>): void
   editAnalysis(id: string, patch: Partial<Pick<MappAnalysisV1, 'bpm' | 'key' | 'scale'>>): void
@@ -80,6 +81,9 @@ interface Queue {
 }
 
 const lookupMessage = (e: unknown) => (e instanceof LookupError ? e.message : '검색 중 오류가 났어요')
+
+// 15분 넘는 곡(모음·라이브가 대부분)은 검색 대신 노래와 무관한 무작위 사진을 커버로 쓴다. 곡 정보는 싣지 않는다.
+export const RANDOM_COVER_URL = 'https://picsum.photos/1000'
 
 // 커버를 못 받아도 조회는 이어 간다.
 const downloadCover = (c: Candidate) => (c.artworkUrl ? fetchBytes(c.artworkUrl).catch(() => undefined) : undefined)
@@ -131,6 +135,7 @@ export const useQueue = create<Queue>()((set, get) => {
   // 분석은 검색과 동시에 시작하고 기다리지 않는다. 시작한 분석은 analyses에 넣어 호출한 쪽이 기다리게 한다.
   const load = async (id: string, file: File, analyses: Promise<void>[]) => {
     let waiting = false
+    let long = false
     try {
       checkSize(file.size)
       const bytes = new Uint8Array(await file.arrayBuffer())
@@ -141,12 +146,14 @@ export const useQueue = create<Queue>()((set, get) => {
       const analysisJob = initialJob(edit, duration)
       patch(id, { source, parsed, edit, analysisJob, status: 'searching' })
       waiting = analysisJob.state === 'waiting'
+      long = duration > MAX_ANALYSIS_SEC
     } catch (e) {
       patch(id, { status: 'failed', error: e instanceof Mp4Error ? e.message : '파일을 읽지 못했어요' })
       return
     }
     if (waiting) analyses.push(get().analyze(id))
-    await get().lookup(id)
+    if (long) await get().shuffleCover(id)
+    else await get().lookup(id)
   }
 
   return {
@@ -206,6 +213,17 @@ export const useQueue = create<Queue>()((set, get) => {
       }
       // 위에서 켠 '검색 중'을 끝낸다. 조회 중에 고른 경우 그 조회는 버려졌으니 여기서 끝내는 것이기도 하다.
       if (current() && item(id)?.status === 'searching') patch(id, { status: 'review' })
+    },
+
+    // lookup과 요청 번호를 같이 써서, 받는 사이 직접 검색하거나 다시 누르면 늦게 온 사진은 버린다.
+    async shuffleCover(id) {
+      const current = begin(id)
+      patch(id, { status: 'searching', error: undefined })
+      // 못 받으면 커버는 그대로 두고 넘어간다(커버는 없어도 저장할 수 있다).
+      const cover = await fetchBytes(`${RANDOM_COVER_URL}?random=${crypto.randomUUID()}`).catch(() => undefined)
+      if (!current()) return
+      if (cover) patchEdit(id, (e) => ({ ...e, cover }))
+      if (item(id)?.status === 'searching') patch(id, { status: 'review' })
     },
 
     analyze(id) {
