@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import { setAnalysisRunner, useQueue } from './store.ts'
 import { AnalysisError } from './runAnalysis.ts'
 import { makeImage, makeM4a, stubFetch } from './testing.ts'
+import { readTags, writeTags } from './mp4.ts'
 
 // 이 파일은 조회를 시험한다. 분석은 Node의 Web Audio 유무에 기대지 않도록 곧바로 실패시킨다.
 setAnalysisRunner(async () => {
@@ -358,4 +359,15 @@ test('shuffleCover: 누를 때마다 다른 주소로 새 사진을 받는다', 
   assert.equal(find(id).status, 'review')
   assert.deepEqual(find(id).edit!.cover, OTHER)
   assert.equal(new Set(urls).size, 2)
+})
+
+test('긴 곡: 파일에 정사각형 커버가 있으면 무작위 사진을 받지 않는다', async (t) => {
+  const square = makeImage(32, 32, 'mjpeg')
+  const urls = stubAll(t)
+  const raw = makeM4a('-af', 'apad', '-t', '901', '-ac', '1', '-b:a', '16k')
+  const bytes = writeTags(raw, { ...readTags(raw), cover: square })
+  const id = await add(new File([bytes as Uint8Array<ArrayBuffer>], 'Long Band - Long Square.m4a'))
+  assert.equal(find(id).status, 'review')
+  assert.deepEqual(find(id).edit!.cover, square)
+  assert.deepEqual(urls, [])
 })

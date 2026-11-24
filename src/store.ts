@@ -8,6 +8,7 @@ import { findLyrics } from './lookup/lyrics.ts'
 import { AnalysisError, MAX_ANALYSIS_SEC, runAnalysis, TOO_LONG } from './runAnalysis.ts'
 import { applyLyrics, initialEdit, selectCandidate, type Edit, type Source } from './edit.ts'
 import { ANALYZER, regroup, type BeatChroma } from './analysis.ts'
+import { isSquare } from './cover.ts'
 import { editAnalysis, type MappAnalysisV1 } from './schema.ts'
 
 export type Status = 'reading' | 'searching' | 'review' | 'saved' | 'failed'
@@ -136,6 +137,7 @@ export const useQueue = create<Queue>()((set, get) => {
   const load = async (id: string, file: File, analyses: Promise<void>[]) => {
     let waiting = false
     let long = false
+    let squareCover = false
     try {
       checkSize(file.size)
       const bytes = new Uint8Array(await file.arrayBuffer())
@@ -147,13 +149,16 @@ export const useQueue = create<Queue>()((set, get) => {
       patch(id, { source, parsed, edit, analysisJob, status: 'searching' })
       waiting = analysisJob.state === 'waiting'
       long = duration > MAX_ANALYSIS_SEC
+      squareCover = !!source.tags.cover && isSquare(source.tags.cover)
     } catch (e) {
       patch(id, { status: 'failed', error: e instanceof Mp4Error ? e.message : '파일을 읽지 못했어요' })
       return
     }
     if (waiting) analyses.push(get().analyze(id))
-    if (long) await get().shuffleCover(id)
-    else await get().lookup(id)
+    if (!long) await get().lookup(id)
+    // 파일에 정사각형 커버가 있으면 지킨다(iTunes 후보를 고를 때와 같은 규칙, edit.ts selectCandidate).
+    else if (squareCover) patch(id, { status: 'review' })
+    else await get().shuffleCover(id)
   }
 
   return {
