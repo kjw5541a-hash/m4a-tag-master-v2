@@ -63,7 +63,8 @@ export default function QueueScreen({ onOpen }: { onOpen(id: string): void }) {
   }
 
   return (
-    <main className="space-y-4">
+    // 남은 높이를 채워 빌드 표시를 화면 맨 아래에 붙인다.
+    <main className="flex flex-1 flex-col space-y-4">
       <h1 className="text-xl font-bold">M4A Tag Master</h1>
       <label className="flex min-h-11 cursor-pointer items-center justify-center rounded-xl bg-blue-600 px-4 font-medium text-white">
         <input type="file" accept=".m4a,audio/mp4,audio/x-m4a" multiple hidden onChange={add} />
@@ -107,7 +108,7 @@ export default function QueueScreen({ onOpen }: { onOpen(id: string): void }) {
           {notice && <p className="text-center text-sm text-red-600">{notice}</p>}
         </div>
       )}
-      <small className="block text-gray-500">빌드 {__BUILD_ID__}</small>
+      <small className="mt-auto block text-gray-500">빌드 {__BUILD_ID__}</small>
     </main>
   )
 }

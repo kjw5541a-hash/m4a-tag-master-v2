@@ -3,6 +3,7 @@ import { useId, useRef, useState } from 'react'
 import { cropSquareJpeg, isSquare } from '../cover.ts'
 import { formatDiff } from '../edit.ts'
 import { fetchBytes } from '../lookup/http.ts'
+import { MAX_ANALYSIS_SEC } from '../runAnalysis.ts'
 import { buildOutput, saveErrorMessage, shareOrDownload } from '../save.ts'
 import { STATUS_LABEL, statusLabel, useQueue } from '../store.ts'
 import AnalysisCard from './AnalysisCard.tsx'
@@ -42,7 +43,7 @@ interface Notice {
 
 export default function EditScreen({ id, onBack }: { id: string; onBack(): void }) {
   const item = useQueue((s) => s.items.find((i) => i.id === id)!)
-  const { lookup, choose, update, markSaved } = useQueue.getState()
+  const { lookup, choose, shuffleCover, update, markSaved } = useQueue.getState()
   const [sheet, setSheet] = useState<'candidates' | 'lyrics'>()
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState<Notice>()
@@ -107,83 +108,97 @@ export default function EditScreen({ id, onBack }: { id: string; onBack(): void 
   }
 
   return (
-    <main className="space-y-4 pb-36">
+    <main className="space-y-2 pb-36">
       {header}
-      <fieldset disabled={locked} className="min-w-0 space-y-4">
-        <div className="flex flex-col items-center gap-2">
-          <CoverThumb bytes={e.cover} className="size-40 rounded-xl" />
-          <div className="flex flex-wrap justify-center gap-2">
-            {e.candidate?.artworkUrl && (
-              // ponytail: 받는 사이 다른 후보를 고르면 이 커버가 덮어쓴다. 필요해지면 요청 번호로 거르기.
-              <button className={button} onClick={() => setCover(fetchBytes(e.candidate!.artworkUrl))}>
-                iTunes 커버
-              </button>
-            )}
-            {original && (
-              <button className={button} onClick={() => update(id, { cover: original })}>
-                기존 커버
-              </button>
-            )}
-            {original && !isSquare(original) && (
-              <button className={button} onClick={() => setCover(cropSquareJpeg(original))}>
-                정사각형으로 자르기
-              </button>
-            )}
+      {/* 한 화면에 들어오게 묶음(커버·검색·후보 / 제목·가수·앨범 / 가사 / 분석) 사이를 선으로 나누고 간격을 줄인다. */}
+      <fieldset disabled={locked} className="min-w-0 divide-y divide-gray-200 border-t border-gray-200">
+        <div className="space-y-2 py-2">
+          <div className="flex items-start gap-3">
+            <CoverThumb bytes={e.cover} className="size-24 shrink-0 rounded-xl" />
+            <div className="flex flex-wrap gap-2">
+              {src.duration > MAX_ANALYSIS_SEC && (
+                <button className={button} onClick={() => void shuffleCover(id)}>
+                  다른 이미지
+                </button>
+              )}
+              {e.candidate?.artworkUrl && (
+                // ponytail: 받는 사이 다른 후보를 고르면 이 커버가 덮어쓴다. 필요해지면 요청 번호로 거르기.
+                <button className={button} onClick={() => setCover(fetchBytes(e.candidate!.artworkUrl))}>
+                  iTunes 커버
+                </button>
+              )}
+              {original && (
+                <button className={button} onClick={() => update(id, { cover: original })}>
+                  기존 커버
+                </button>
+              )}
+              {original && !isSquare(original) && (
+                <button className={button} onClick={() => setCover(cropSquareJpeg(original))}>
+                  정사각형으로 자르기
+                </button>
+              )}
+            </div>
+          </div>
+
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(ev) => {
+              ev.preventDefault()
+              void lookup(id, e.query)
+            }}
+          >
+            <input aria-label="검색어" enterKeyHint="search" className={input} value={e.query} onChange={(ev) => update(id, { query: ev.target.value })} />
+            <button type="submit" aria-label="검색" className={button}>
+              🔍
+            </button>
+          </form>
+
+          <button
+            className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-1 text-left disabled:opacity-50"
+            disabled={e.candidates.length === 0}
+            onClick={() => setSheet('candidates')}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium">{e.candidate?.title ?? '후보 없음'}</span>
+              {e.candidate && (
+                <span className="block truncate text-sm text-gray-500">
+                  {e.candidate.artist} · {e.candidate.album}
+                  {diff(e.candidate.durationSec)}
+                </span>
+              )}
+            </span>
+            <span aria-hidden>›</span>
+          </button>
+        </div>
+
+        <div className="space-y-2 py-2">
+          <Field label="제목" value={e.title} onChange={(v) => update(id, { title: v })} original={parsed.title} itunes={e.candidate?.title} />
+          <Field label="가수" value={e.artist} onChange={(v) => update(id, { artist: v })} original={parsed.artist} itunes={e.candidate?.artist} />
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <Field label="앨범" value={e.album} onChange={(v) => update(id, { album: v })} />
+            </div>
+            <button className={button} onClick={() => update(id, { title: e.artist, artist: e.title })}>
+              가수⇄제목
+            </button>
           </div>
         </div>
 
-        <form
-          className="flex items-center gap-2"
-          onSubmit={(ev) => {
-            ev.preventDefault()
-            void lookup(id, e.query)
-          }}
-        >
-          <input aria-label="검색어" enterKeyHint="search" className={input} value={e.query} onChange={(ev) => update(id, { query: ev.target.value })} />
-          <button type="submit" aria-label="검색" className={button}>
-            🔍
+        <div className="py-2">
+          <button
+            className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-gray-200 px-3 text-left disabled:opacity-50"
+            onClick={() => setSheet('lyrics')}
+          >
+            <span className="shrink-0">{`가사  일반 ${e.lyrics ? '✓' : '없음'} · 싱크 ${e.lrc ? '✓' : '없음'}`}</span>
+            <span className="min-w-0 flex-1 truncate text-sm text-gray-500">{e.lyrics.split('\n').find((l) => l.trim())}</span>
+            <span aria-hidden>›</span>
           </button>
-        </form>
-
-        <button
-          className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-gray-200 p-3 text-left disabled:opacity-50"
-          disabled={e.candidates.length === 0}
-          onClick={() => setSheet('candidates')}
-        >
-          <span className="min-w-0 flex-1">
-            <span className="block truncate font-medium">{e.candidate?.title ?? '후보 없음'}</span>
-            {e.candidate && (
-              <span className="block truncate text-sm text-gray-500">
-                {e.candidate.artist} · {e.candidate.album}
-                {diff(e.candidate.durationSec)}
-              </span>
-            )}
-          </span>
-          <span aria-hidden>›</span>
-        </button>
-
-        <Field label="제목" value={e.title} onChange={(v) => update(id, { title: v })} original={parsed.title} itunes={e.candidate?.title} />
-        <Field label="가수" value={e.artist} onChange={(v) => update(id, { artist: v })} original={parsed.artist} itunes={e.candidate?.artist} />
-        <button className={button} onClick={() => update(id, { title: e.artist, artist: e.title })}>
-          가수⇄제목
-        </button>
-        <Field label="앨범" value={e.album} onChange={(v) => update(id, { album: v })} />
-
-        <button
-          className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-gray-200 p-3 text-left disabled:opacity-50"
-          onClick={() => setSheet('lyrics')}
-        >
-          <span className="min-w-0 flex-1">
-            <span className="block">{`가사  일반 ${e.lyrics ? '✓' : '없음'} · 싱크 ${e.lrc ? '✓' : '없음'}`}</span>
-            <span className="block truncate text-sm text-gray-500">{e.lyrics.split('\n').find((l) => l.trim())}</span>
-          </span>
-          <span aria-hidden>›</span>
-        </button>
+        </div>
 
         <AnalysisCard id={id} job={item.analysisJob} analysis={e.analysis} />
 
         {item.error && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 py-2">
             <p className="flex-1 text-red-600">{item.error}</p>
             <button className={button} onClick={() => void lookup(id)}>
               다시 시도

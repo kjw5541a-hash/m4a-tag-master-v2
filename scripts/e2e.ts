@@ -131,7 +131,7 @@ async function run() {
 
     // 분석 카드가 BPM을 보여 줄 때까지 기다린다(Chrome에서 진짜 분석이 돈다).
     await page.getByText('분석 (참고용)').waitFor()
-    await page.getByText(/^BPM \d/).waitFor({ timeout: 60_000 })
+    await page.getByLabel('BPM 직접 입력').waitFor({ timeout: 60_000 })
     // 분석이 끝나면 상태가 '분석 완료, 저장 필요'로 바뀐다.
     await page.getByText('분석 완료, 저장 필요').waitFor()
 

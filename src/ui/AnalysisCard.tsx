@@ -19,6 +19,8 @@ export default function AnalysisCard({ id, job, analysis }: { id: string; job?: 
     </button>
   )
 
+  // BPM 입력은 제목 줄에 붙여 한 줄을 아낀다(편집 화면이 한 화면에 들어오게).
+  let controls
   let body
   if (job.state === 'waiting') body = <p>분석 대기</p>
   else if (job.state === 'running') body = <p>{`분석 중 ${Math.round((job.progress ?? 0) * 100)}%`}</p>
@@ -32,48 +34,53 @@ export default function AnalysisCard({ id, job, analysis }: { id: string; job?: 
       if (v > 0 && v < 1000 && v !== analysis.bpm) change({ bpm: v })
       else el.value = String(analysis.bpm)
     }
+    controls = (
+      <>
+        <span className="text-gray-500">BPM</span>
+        <input
+          key={analysis.bpm}
+          type="number"
+          inputMode="decimal"
+          step="0.1"
+          aria-label="BPM 직접 입력"
+          className="min-h-11 w-20 rounded-lg border border-gray-300 px-3 text-base"
+          defaultValue={analysis.bpm}
+          onBlur={(ev) => commitBpm(ev.currentTarget)}
+        />
+        <button className={button} onClick={() => change({ bpm: analysis.bpm * 2 })}>
+          ×2
+        </button>
+        <button className={button} onClick={() => change({ bpm: analysis.bpm / 2 })}>
+          ÷2
+        </button>
+      </>
+    )
     body = (
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-auto">BPM {analysis.bpm}</span>
-          <button className={button} onClick={() => change({ bpm: analysis.bpm * 2 })}>
-            ×2
-          </button>
-          <button className={button} onClick={() => change({ bpm: analysis.bpm / 2 })}>
-            ÷2
-          </button>
-          <input
-            key={analysis.bpm}
-            type="number"
-            inputMode="decimal"
-            step="0.1"
-            aria-label="BPM 직접 입력"
-            className="min-h-11 w-24 rounded-lg border border-gray-300 px-3 text-base"
-            defaultValue={analysis.bpm}
-            onBlur={(ev) => commitBpm(ev.currentTarget)}
-          />
+      <>
+        <div className="flex items-center gap-2">
+          <label className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="w-10 shrink-0 text-gray-500">조성</span>
+            <select
+              className="min-h-11 min-w-0 flex-1 rounded-lg border border-gray-300 px-3 text-base"
+              value={`${analysis.key} ${analysis.scale}`}
+              onChange={(ev) => {
+                const [key, scale] = ev.target.value.split(' ') as [MappAnalysisV1['key'], MappAnalysisV1['scale']]
+                change({ key, scale })
+              }}
+            >
+              {KEYS.map((k) => (
+                <option key={k.value} value={k.value}>
+                  {k.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {retry}
         </div>
-        <label className="flex items-center gap-2">
-          <span className="w-10 shrink-0 text-gray-500">조성</span>
-          <select
-            className="min-h-11 min-w-0 flex-1 rounded-lg border border-gray-300 px-3 text-base"
-            value={`${analysis.key} ${analysis.scale}`}
-            onChange={(ev) => {
-              const [key, scale] = ev.target.value.split(' ') as [MappAnalysisV1['key'], MappAnalysisV1['scale']]
-              change({ key, scale })
-            }}
-          >
-            {KEYS.map((k) => (
-              <option key={k.value} value={k.value}>
-                {k.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div>
-          <p className="text-gray-500">주요 진행</p>
+        <div className="flex gap-2 text-sm">
+          <p className="shrink-0 text-gray-500">주요 진행</p>
           {analysis.topProgressions.length ? (
-            <ul>
+            <ul className="min-w-0">
               {analysis.topProgressions.map((p) => (
                 <li key={p.chords.join('-')}>{`${p.chords.map((c) => spellChord(c, analysis.key, analysis.scale)).join('–')} (${p.count}회)`}</li>
               ))}
@@ -82,8 +89,7 @@ export default function AnalysisCard({ id, job, analysis }: { id: string; job?: 
             <p>반복 진행 없음</p>
           )}
         </div>
-        <div>{retry}</div>
-      </div>
+      </>
     )
   } else
     body = (
@@ -94,8 +100,11 @@ export default function AnalysisCard({ id, job, analysis }: { id: string; job?: 
     )
 
   return (
-    <section className="space-y-2 rounded-lg border border-gray-200 p-3">
-      <h2 className="font-medium">분석 (참고용)</h2>
+    <section className="space-y-2 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="mr-auto font-medium">분석 (참고용)</h2>
+        {controls}
+      </div>
       {body}
     </section>
   )
