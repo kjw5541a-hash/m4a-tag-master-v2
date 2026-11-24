@@ -371,3 +371,10 @@ test('긴 곡: 파일에 정사각형 커버가 있으면 무작위 사진을 �
   assert.deepEqual(find(id).edit!.cover, square)
   assert.deepEqual(urls, [])
 })
+
+test('removeSaved: 저장됨인 곡만 큐에서 뺀다', () => {
+  const statuses = ['saved', 'review', 'saved', 'searching', 'failed'] as const
+  useQueue.setState({ items: statuses.map((status, i) => ({ id: `s${i}`, fileName: `${i}.m4a`, status })) })
+  useQueue.getState().removeSaved()
+  assert.deepEqual(useQueue.getState().items.map((i) => i.id), ['s1', 's3', 's4'])
+})

@@ -77,6 +77,7 @@ interface Queue {
   update(id: string, patch: Partial<Edit>): void
   editAnalysis(id: string, patch: Partial<Pick<MappAnalysisV1, 'bpm' | 'key' | 'scale'>>): void
   remove(id: string): void
+  removeSaved(): void
   markSaved(id: string, savedAs: string): void
   setSaveError(id: string, message: string): void
 }
@@ -292,6 +293,8 @@ export const useQueue = create<Queue>()((set, get) => {
       get().update(id, { analysis: next })
     },
     remove: (id) => set((s) => ({ items: s.items.filter((i) => i.id !== id) })),
+    // 큐에서만 뺀다. 저장한 파일은 그대로다.
+    removeSaved: () => set((s) => ({ items: s.items.filter((i) => i.status !== 'saved') })),
     markSaved: (id, savedAs) => patch(id, { status: 'saved', savedAs, saveError: undefined }),
     setSaveError: (id, message) => patch(id, { saveError: message }),
   }

@@ -25,11 +25,13 @@ export default function QueueScreen({ onOpen }: { onOpen(id: string): void }) {
   const items = useQueue((s) => s.items)
   const addFiles = useQueue((s) => s.addFiles)
   const remove = useQueue((s) => s.remove)
+  const removeSaved = useQueue((s) => s.removeSaved)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState<string>()
   // 공유가 끝나지 않은 묶음. 다시 누르면 바뀌지 않은 곡은 다시 만들지 않는다.
   const lastBatch = useRef<Built[]>([])
   const { ready, busy } = saveAllTargets(items)
+  const savedCount = items.filter((i) => i.status === 'saved').length
 
   // 클릭 핸들러 안에서 await 없이 파일을 만들고 바로 공유를 연다. 그래야 공유 권한(사용자 제스처)이 유지된다.
   function saveAll() {
@@ -107,6 +109,11 @@ export default function QueueScreen({ onOpen }: { onOpen(id: string): void }) {
           {busy && <p className="text-center text-sm text-gray-500">분석이 끝나면 저장할 수 있어요</p>}
           {notice && <p className="text-center text-sm text-red-600">{notice}</p>}
         </div>
+      )}
+      {savedCount > 0 && (
+        <button className="min-h-11 w-full rounded-xl border border-gray-300 text-gray-700" onClick={removeSaved}>
+          {`저장된 곡 지우기 (${savedCount}곡)`}
+        </button>
       )}
       <small className="mt-auto block text-gray-500">빌드 {__BUILD_ID__}</small>
     </main>

@@ -196,6 +196,10 @@ async function run() {
     for (const f of shared) assert.ok(parseAnalysis(readTags(new Uint8Array(f.bytes)).analysis), `${f.name}에 분석이 있어야 해요`)
     await page.waitForFunction(() => document.body.innerText.split('저장됨').length - 1 === 3)
     assert.equal(await saveAll.count(), 0)
+    // 저장된 곡은 큐에서 한 번에 뺄 수 있다.
+    await page.getByRole('button', { name: '저장된 곡 지우기 (3곡)' }).click()
+    assert.equal(await page.getByText('저장됨').count(), 0)
+    assert.equal(await page.getByRole('button', { name: '삭제' }).count(), 0)
 
     assert.deepEqual(errors, [])
     assert.deepEqual(badResponses, [])
