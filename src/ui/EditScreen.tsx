@@ -226,6 +226,8 @@ export default function EditScreen({ id, onBack }: { id: string; onBack(): void 
                 )}
               </p>
             )}
+            {/* 웹 앱은 '파일'의 파일을 덮어쓰지 못해, 다시 저장하면 '제목 2.m4a'가 생긴다. */}
+            {item.status === 'saved' && <p className="text-sm text-gray-500">저장한 곡이에요. 다시 저장하면 '파일'에 하나 더 생겨요</p>}
             <button className="min-h-12 w-full rounded-xl bg-blue-600 font-medium text-white disabled:opacity-50" disabled={saving || analyzing} onClick={save}>
               {analyzing ? '분석 기다리는 중…' : '저장 · 공유'}
             </button>

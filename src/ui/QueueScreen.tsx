@@ -28,6 +28,8 @@ export default function QueueScreen({ onOpen }: { onOpen(id: string): void }) {
   const removeSaved = useQueue((s) => s.removeSaved)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState<string>()
+  // 이미 큐에 있어 넣지 않은 곡 수(같은 파일 두 번 넣기 방지). 다음 추가 때 지운다.
+  const [skipped, setSkipped] = useState(0)
   // 공유가 끝나지 않은 묶음. 다시 누르면 바뀌지 않은 곡은 다시 만들지 않는다.
   const lastBatch = useRef<Built[]>([])
   const { ready, busy } = saveAllTargets(items)
@@ -59,7 +61,8 @@ export default function QueueScreen({ onOpen }: { onOpen(id: string): void }) {
     const files = Array.from(e.target.files ?? [])
     e.target.value = ''
     if (files.length === 0) return
-    const { ids } = addFiles(files)
+    const { ids, skipped } = addFiles(files)
+    setSkipped(skipped)
     // 한 곡이면 바로 편집 화면으로, 여러 곡이면 큐에 남는다.
     if (ids.length === 1) onOpen(ids[0]!)
   }
@@ -72,6 +75,7 @@ export default function QueueScreen({ onOpen }: { onOpen(id: string): void }) {
         <input type="file" accept=".m4a,audio/mp4,audio/x-m4a" multiple hidden onChange={add} />
         ＋ 파일 추가
       </label>
+      {skipped > 0 && <p className="text-center text-sm text-gray-500">{`이미 큐에 있는 ${skipped}곡은 빼고 넣었어요`}</p>}
       <ul className="space-y-2">
         {items.map((item) => (
           <li key={item.id} className="flex items-center gap-1 rounded-xl border border-gray-200 p-2">

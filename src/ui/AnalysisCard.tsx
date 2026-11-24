@@ -1,6 +1,6 @@
 // 분석 카드: 분석 상태, BPM·조성 수정, 반복 코드 진행 (기획서 6.2, 5.5).
 import { keyLabel, PITCH_CLASSES, spellChord, type MappAnalysisV1 } from '../schema.ts'
-import { useQueue, type Item } from '../store.ts'
+import { SAVED_BEFORE, useQueue, type Item } from '../store.ts'
 
 const button = 'min-h-11 min-w-11 rounded-lg border border-gray-300 px-3 text-sm disabled:opacity-50'
 // 값은 파일과 같은 # 표기, 보이는 글자는 조성에 맞춘 표기(F10)
@@ -95,7 +95,7 @@ export default function AnalysisCard({ id, job, analysis }: { id: string; job?: 
     body = (
       <div className="flex items-center gap-2">
         <p className="flex-1">{job.message}</p>
-        {job.state === 'failed' && retry}
+        {(job.state === 'failed' || job.message === SAVED_BEFORE) && retry}
       </div>
     )
 

@@ -178,7 +178,8 @@ async function run() {
         )
       }
     })
-    await page.locator('input[type=file]').setInputFiles([fixture('a.m4a'), fixture('b.m4a')])
+    const a = fixture('a.m4a')
+    await page.locator('input[type=file]').setInputFiles([a, fixture('b.m4a')])
     const saveAll = page.getByRole('button', { name: '모두 저장 (2곡)' })
     await page.waitForFunction(
       () => [...document.querySelectorAll('button')].some((b) => b.textContent === '모두 저장 (2곡)' && !b.disabled),
@@ -200,6 +201,14 @@ async function run() {
     await page.getByRole('button', { name: '저장된 곡 지우기 (3곡)' }).click()
     assert.equal(await page.getByText('저장됨').count(), 0)
     assert.equal(await page.getByRole('button', { name: '삭제' }).count(), 0)
+
+    // 저장한 원본을 다시 넣으면 검색·분석 없이 '이전에 저장함'이고, [모두 저장] 대상이 아니다.
+    await page.locator('input[type=file]').setInputFiles(a)
+    await page.getByText(/^이전에 저장함 \(\d+\/\d+\)$/).waitFor()
+    await page.getByText("저장한 곡이에요. 다시 저장하면 '파일'에 하나 더 생겨요").waitFor()
+    await page.getByRole('button', { name: /큐/ }).click()
+    await page.getByText(/^이전에 저장함/).waitFor()
+    assert.equal(await page.getByRole('button', { name: /모두 저장/ }).count(), 0)
 
     assert.deepEqual(errors, [])
     assert.deepEqual(badResponses, [])
