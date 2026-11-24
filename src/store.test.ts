@@ -3,10 +3,24 @@
 // iTunes 호출 제한(분당 20회)은 이 파일 안에서 공유된다. 지금 19회라, 조회를 더하면 제한에 걸려 한참 기다린다.
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { setAnalysisRunner, useQueue } from './store.ts'
+import { SAVED_BEFORE, setAnalysisRunner, statusLabel, useQueue } from './store.ts'
 import { AnalysisError } from './runAnalysis.ts'
 import { makeImage, makeM4a, stubFetch } from './testing.ts'
 import { readTags, writeTags } from './mp4.ts'
+
+// 저장 기록(localStorage)을 Map으로 흉내 낸다. Node에는 localStorage가 없다. storageBroken이면 쓰기가 실패한다.
+const storage = new Map<string, string>()
+let storageBroken = false
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: {
+    getItem: (k: string) => storage.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      if (storageBroken) throw new Error('QuotaExceededError')
+      storage.set(k, v)
+    },
+  },
+})
 
 // 이 파일은 조회를 시험한다. 분석은 Node의 Web Audio 유무에 기대지 않도록 곧바로 실패시킨다.
 setAnalysisRunner(async () => {
@@ -207,7 +221,7 @@ test('update·markSaved·remove', async (t) => {
   const { update, markSaved, remove } = useQueue.getState()
   update(id, { title: '고친 제목' })
   assert.equal(find(id).edit!.title, '고친 제목')
-  markSaved(id, 'a.m4a')
+  markSaved(id, { name: 'a.m4a', size: 1 })
   assert.equal(find(id).status, 'saved')
   assert.equal(find(id).savedAs, 'a.m4a')
   // 저장 뒤 검색어만 고치면 파일과 화면이 그대로라 저장됨을 유지하고, 다른 값을 고치면 확인 필요로 돌아간다.
@@ -247,7 +261,7 @@ test('조회 중에 저장 표시를 하면 조회가 끝나도 저장됨으로 
   })
   const id = await add(m4a('Saved Band - Saved Song.m4a'))
   const pending = useQueue.getState().lookup(id, 'savedq')
-  useQueue.getState().markSaved(id, 'out.m4a')
+  useQueue.getState().markSaved(id, { name: 'out.m4a', size: 1 })
   await pending
   assert.equal(find(id).status, 'saved')
   assert.equal(find(id).savedAs, 'out.m4a')
@@ -377,4 +391,48 @@ test('removeSaved: 저장됨인 곡만 큐에서 뺀다', () => {
   useQueue.setState({ items: statuses.map((status, i) => ({ id: `s${i}`, fileName: `${i}.m4a`, status })) })
   useQueue.getState().removeSaved()
   assert.deepEqual(useQueue.getState().items.map((i) => i.id), ['s1', 's3', 's4'])
+})
+
+test('저장한 곡을 다시 넣으면 검색·분석 없이 이전에 저장함', async (t) => {
+  const urls = stubAll(t)
+  const id = await add(longM4a('Long Band - Long Again.m4a'))
+  // 결과 파일 이름·크기. 같은 바이트로 만들어 아래에서 결과 파일을 다시 넣는 경우도 본다.
+  useQueue.getState().markSaved(id, { name: 'Long Band - Long Again Out.m4a', size: longBytes!.length })
+  for (const name of ['Long Band - Long Again.m4a', 'Long Band - Long Again Out.m4a']) {
+    urls.length = 0
+    const again = await add(longM4a(name))
+    const item = find(again)
+    assert.equal(item.status, 'saved', name)
+    assert.ok(item.savedBefore, name)
+    assert.match(statusLabel(item), /^이전에 저장함 \(\d{1,2}\/\d{1,2}\)$/)
+    assert.deepEqual(item.analysisJob, { state: 'skipped', message: SAVED_BEFORE })
+    // 검색도 무작위 커버도 받지 않는다.
+    assert.deepEqual(urls, [])
+    // 고치면 다시 저장할 수 있게 '저장 필요'로 돌아간다.
+    useQueue.getState().update(again, { title: '고친 제목' })
+    assert.equal(find(again).status, 'review')
+  }
+})
+
+test('같은 파일은 큐에 한 번만 넣는다', async (t) => {
+  stubAll(t)
+  useQueue.setState({ items: [] })
+  const f = longM4a('Long Band - Long Twice.m4a')
+  const first = useQueue.getState().addFiles([f, f])
+  assert.equal(first.ids.length, 1)
+  assert.equal(first.skipped, 1)
+  const second = useQueue.getState().addFiles([longM4a('Long Band - Long Twice.m4a')])
+  assert.deepEqual(second.ids, [])
+  assert.equal(second.skipped, 1)
+  await Promise.all([first.done, second.done])
+  assert.equal(useQueue.getState().items.length, 1)
+})
+
+test('저장 기록을 못 써도 저장은 된다', (t) => {
+  storageBroken = true
+  t.after(() => (storageBroken = false))
+  useQueue.setState({ items: [{ id: 'b', fileName: 'b.m4a', status: 'review', fileKey: '1:b.m4a' }] })
+  useQueue.getState().markSaved('b', { name: 'B.m4a', size: 2 })
+  assert.equal(find('b').status, 'saved')
+  assert.equal(find('b').savedAs, 'B.m4a')
 })

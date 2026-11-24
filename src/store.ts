@@ -9,6 +9,7 @@ import { AnalysisError, MAX_ANALYSIS_SEC, runAnalysis, TOO_LONG } from './runAna
 import { applyLyrics, initialEdit, selectCandidate, type Edit, type Source } from './edit.ts'
 import { ANALYZER, regroup, type BeatChroma } from './analysis.ts'
 import { isSquare } from './cover.ts'
+import { fileKey, remember, savedAt } from './history.ts'
 import { editAnalysis, type MappAnalysisV1 } from './schema.ts'
 
 export type Status = 'reading' | 'searching' | 'review' | 'saved' | 'failed'
@@ -31,8 +32,14 @@ const REVIEW_LABEL: Record<AnalysisState, string> = {
   skipped: '분석 건너뜀, 저장 필요',
 }
 
+export const SAVED_BEFORE = '이전에 저장한 곡이라 분석하지 않았어요'
+
 /** 큐 카드와 편집 화면에 보이는 상태. 조회가 끝난 곡은 분석 상태를 함께 보여 준다. */
-export function statusLabel(item: Pick<Item, 'status' | 'analysisJob'>): string {
+export function statusLabel(item: Pick<Item, 'status' | 'analysisJob' | 'savedBefore'>): string {
+  if (item.status === 'saved' && item.savedBefore) {
+    const d = new Date(item.savedBefore)
+    return `이전에 저장함 (${d.getMonth() + 1}/${d.getDate()})`
+  }
   const job = item.analysisJob
   if (item.status !== 'review' || !job) return STATUS_LABEL[item.status]
   return job.state === 'running' ? `분석 중 ${Math.round((job.progress ?? 0) * 100)}%` : REVIEW_LABEL[job.state]
@@ -65,11 +72,15 @@ export interface Item {
   analysisJob?: { state: AnalysisState; progress?: number; message?: string }
   // 이번 분석의 비트 사이 크로마(메모리 전용). BPM을 고치면 이것으로 코드를 다시 묶는다. 파일에서 읽은 분석에는 없다.
   chroma?: BeatChroma
+  // 원본 파일의 '크기:이름'(history.ts). 큐 안 중복과 저장 기록에 쓴다.
+  fileKey?: string
+  // 이 기기에서 전에 저장한 파일이면 그 시각(ISO). 다시 저장하면 지운다.
+  savedBefore?: string
 }
 
 interface Queue {
   items: Item[]
-  addFiles(files: File[]): { ids: string[]; done: Promise<void> }
+  addFiles(files: File[]): { ids: string[]; skipped: number; done: Promise<void> }
   lookup(id: string, query?: string): Promise<void>
   choose(id: string, c: Candidate): Promise<void>
   shuffleCover(id: string): Promise<void>
@@ -78,7 +89,7 @@ interface Queue {
   editAnalysis(id: string, patch: Partial<Pick<MappAnalysisV1, 'bpm' | 'key' | 'scale'>>): void
   remove(id: string): void
   removeSaved(): void
-  markSaved(id: string, savedAs: string): void
+  markSaved(id: string, file: { name: string; size: number }): void
   setSaveError(id: string, message: string): void
 }
 
@@ -146,6 +157,12 @@ export const useQueue = create<Queue>()((set, get) => {
       const source: Source = { fileName: file.name, bytes, duration, tags: readTags(bytes) }
       const parsed = parseSource(file.name, source.tags)
       const edit = initialEdit(source, parsed)
+      // 전에 저장한 곡은 검색·자동 분석 없이 '저장됨'으로 둔다. 고치거나 [다시 분석]하면 '저장 필요'로 돌아간다.
+      if (item(id)?.savedBefore) {
+        const analysisJob = edit.analysis ? { state: 'done' as const } : { state: 'skipped' as const, message: SAVED_BEFORE }
+        patch(id, { source, parsed, edit, analysisJob, status: 'saved' })
+        return
+      }
       const analysisJob = initialJob(edit, duration)
       patch(id, { source, parsed, edit, analysisJob, status: 'searching' })
       waiting = analysisJob.state === 'waiting'
@@ -165,10 +182,24 @@ export const useQueue = create<Queue>()((set, get) => {
   return {
     items: [],
 
-    addFiles(files) {
+    addFiles(all) {
+      // 같은 파일('크기:이름')은 큐에 한 번만 넣는다. 한 번에 고른 것끼리도 거른다.
+      const seen = new Set(get().items.map((i) => i.fileKey))
+      const files = all.filter((f) => {
+        const k = fileKey(f.name, f.size)
+        if (seen.has(k)) return false
+        seen.add(k)
+        return true
+      })
       const ids = files.map(() => crypto.randomUUID())
       set((s) => ({
-        items: [...s.items, ...files.map((f, i): Item => ({ id: ids[i]!, fileName: f.name, status: 'reading' }))],
+        items: [
+          ...s.items,
+          ...files.map((f, i): Item => {
+            const key = fileKey(f.name, f.size)
+            return { id: ids[i]!, fileName: f.name, status: 'reading', fileKey: key, savedBefore: savedAt(key) }
+          }),
+        ],
       }))
       const done = (async () => {
         // 한 곡씩 차례로: iTunes 호출 제한과 메모리 때문에 병렬로 하지 않는다.
@@ -176,7 +207,7 @@ export const useQueue = create<Queue>()((set, get) => {
         for (const [i, file] of files.entries()) await load(ids[i]!, file, analyses)
         await Promise.all(analyses)
       })()
-      return { ids, done }
+      return { ids, skipped: all.length - files.length, done }
     },
 
     async lookup(id, query) {
@@ -295,7 +326,11 @@ export const useQueue = create<Queue>()((set, get) => {
     remove: (id) => set((s) => ({ items: s.items.filter((i) => i.id !== id) })),
     // 큐에서만 뺀다. 저장한 파일은 그대로다.
     removeSaved: () => set((s) => ({ items: s.items.filter((i) => i.status !== 'saved') })),
-    markSaved: (id, savedAs) => patch(id, { status: 'saved', savedAs, saveError: undefined }),
+    // 원본과 결과 파일을 둘 다 기억한다. 어느 쪽을 다시 넣어도 알아본다.
+    markSaved: (id, file) => {
+      remember([item(id)?.fileKey, fileKey(file.name, file.size)].filter((k) => k !== undefined))
+      patch(id, { status: 'saved', savedAs: file.name, saveError: undefined, savedBefore: undefined })
+    },
     setSaveError: (id, message) => patch(id, { saveError: message }),
   }
 })

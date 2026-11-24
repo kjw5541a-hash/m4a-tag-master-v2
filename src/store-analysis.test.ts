@@ -223,7 +223,7 @@ test('analyze를 연달아 부르면 마지막 결과만 남는다. 저장됨이
   assert.equal(find(id).edit?.analysis?.bpm, 2)
 
   // 붙어서 두 번 부르면 앞의 것은 아예 돌지 않는다
-  useQueue.getState().markSaved(id, 'x.m4a')
+  useQueue.getState().markSaved(id, { name: 'x.m4a', size: 1 })
   await Promise.all([useQueue.getState().analyze(id), useQueue.getState().analyze(id)])
   assert.equal(calls, 3)
   assert.equal(find(id).edit?.analysis?.bpm, 3)
@@ -277,7 +277,7 @@ test('setSaveError는 검색 오류(error)를 건드리지 않고, 저장되면 
   setSaveError('a', '저장을 막았어요')
   assert.equal(find('a').saveError, '저장을 막았어요')
   assert.equal(find('a').error, '검색 오류')
-  markSaved('a', 'a.m4a')
+  markSaved('a', { name: 'a.m4a', size: 1 })
   assert.equal(find('a').saveError, undefined)
   assert.equal(find('a').status, 'saved')
 })

@@ -47,7 +47,7 @@ export default function QueueScreen({ onOpen }: { onOpen(id: string): void }) {
     shareOrDownload(built.map((b) => b.file))
       .then((r) => {
         if (r === 'cancelled') return
-        for (const b of built) markSaved(b.id, b.file.name)
+        for (const b of built) markSaved(b.id, b.file)
         lastBatch.current = []
       })
       .catch((err: unknown) => setNotice(saveErrorMessage(err)))

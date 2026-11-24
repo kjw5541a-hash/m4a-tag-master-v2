@@ -100,7 +100,7 @@ export default function EditScreen({ id, onBack }: { id: string; onBack(): void 
     setSaving(true)
     shareOrDownload([saved])
       .then((r) => {
-        if (r !== 'cancelled') markSaved(id, saved.name)
+        if (r !== 'cancelled') markSaved(id, saved)
       })
       // 만든 파일은 그대로 두므로 다시 누르면 바로 공유가 열린다.
       .catch((err: unknown) => setNotice({ text: saveErrorMessage(err) }))
